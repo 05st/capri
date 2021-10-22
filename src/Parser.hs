@@ -1,7 +1,9 @@
 {-# Language TupleSections #-}
 
-module Parser where
+module Parser (Parser.parse) where
 
+import Data.List
+import Data.Function
 import Data.Functor.Identity
 
 import Text.Parsec
@@ -10,11 +12,13 @@ import Text.Parsec.Expr
 import Lexer
 import Syntax
 import OperatorDef
+import qualified Text.Parsec.Prim as Parsec
 
 type Parser a = ParsecT String [OperatorDef] Identity a
 
+-- Declarations
 declaration :: Parser UntypedDecl
-declaration = funcDecl <|> operDecl <|> varDecl <|> (DStmt <$> statement)
+declaration = funcDecl <|> operDecl <|> try varDecl <|> (DStmt <$> statement)
 
 funcDecl :: Parser UntypedDecl
 funcDecl = do
@@ -25,13 +29,14 @@ funcDecl = do
     reservedOp "=>"
     expr <- expression
     semi
-    pure $ DFunc name paramsParsed retAnnot expr
+    return $ DFunc name paramsParsed retAnnot expr
 
 operDecl :: Parser UntypedDecl
 operDecl = do
     reserved "op"
     assocParsed <- assoc
     precedence <- decimal
+    whitespace
     oper <- operator
     paramsParsed <- params
     retAnnot <- optionMaybe typeAnnot
@@ -39,7 +44,8 @@ operDecl = do
     expr <- expression
     semi
     let opdef = OperatorDef assocParsed precedence oper
-    pure $ DOper opdef oper paramsParsed retAnnot expr
+    modifyState (opdef :)
+    return $ DOper opdef oper paramsParsed retAnnot expr
     where
         assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
             <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
@@ -52,15 +58,92 @@ varDecl = do
     reservedOp ":="
     DVar isMut name annot <$> (expression <* semi)
 
+-- Statements
 statement :: Parser UntypedStmt
 statement = SExpr <$> (expression <* semi)
 
+-- Expressions
 expression :: Parser UntypedExpr
-expression = undefined
+expression = do
+    opers <- getState 
+    let table = mkTable opers
+    buildExpressionParser table term
+    where
+        mkTable = map (map toParser) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
+        toParser (OperatorDef assoc _ oper) = case assoc of
+            ALeft -> infixOp oper (EBinOp () oper) (toAssoc assoc)
+            ARight -> infixOp oper (EBinOp () oper) (toAssoc assoc)
+            ANone -> infixOp oper (EBinOp () oper) (toAssoc assoc)
+            APrefix -> prefixOp oper (EUnaOp () oper)
+            APostfix -> postfixOp oper (EUnaOp () oper)
+        infixOp name f = Infix (reservedOp name >> return f)
+        prefixOp name f = Prefix (reservedOp name >> return f)
+        postfixOp name f = Postfix (reservedOp name >> return f)
+        toAssoc ALeft = AssocLeft
+        toAssoc ARight = AssocRight
+        toAssoc ANone = AssocNone
+        toAssoc _ = undefined
 
+term :: Parser UntypedExpr
+term = ifExpr <|> matchExpr <|> closure <|> try assign <|> value
+
+ifExpr :: Parser UntypedExpr
+ifExpr = do
+    reserved "if"
+    cond <- expression
+    trueBody <- expression
+    falseBody <- option (ELit () LUnit) (reserved "else" *> expression)
+    return $ EIf () cond trueBody falseBody
+
+matchExpr :: Parser UntypedExpr
+matchExpr = do
+    reserved "match"
+    undefined
+
+closure :: Parser UntypedExpr
+closure = do
+    closedVars <- brackets (sepBy identifier comma)
+    paramsParsed <- params
+    retAnnot <- optionMaybe typeAnnot
+    reservedOp "=>"
+    EClosure () closedVars paramsParsed retAnnot <$> expression
+
+assign :: Parser UntypedExpr
+assign = do
+    var <- identifier
+    reservedOp "="
+    EAssign () (EVar () var) <$> expression
+
+value :: Parser UntypedExpr
+value = try call <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+
+call :: Parser UntypedExpr
+call = do
+    id <- identifier -- TODO
+    args <- parens (sepBy expression comma)
+    return $ ECall () (EVar () id) args
+
+variable :: Parser UntypedExpr
+variable = EVar () <$> (identifier <|> parens operator)
+
+block :: Parser UntypedExpr
+block = braces $ do
+    decls <- many (try declaration)
+    result <- option (ELit () LUnit) expression
+    whitespace
+    return $ EBlock () decls result
+
+-- Literals
 literal :: Parser Lit
-literal = undefined
+literal = (LInt <$> integer) <|> (LFloat <$> float)
+    <|> (LChar <$> charLiteral) <|> (LString <$> stringLiteral)
+    <|> (LBool True <$ reserved "true") <|> (LBool False <$ reserved "false")
+    <|> (LUnit <$ reserved "()")
 
+integer :: Parser Integer
+integer = decimal <|> try octal <|> try hexadecimal
+
+-- Parse types
 type' :: Parser Type
 type' = try typeFunc <|> typeBase
 
@@ -82,3 +165,7 @@ typeAnnot = reservedOp ":" *> type'
 
 params :: Parser [(String, Maybe Type)]
 params = parens (sepBy ((,) <$> identifier <*> optionMaybe typeAnnot) comma)
+
+-- Run parser
+parse :: String -> Either ParseError [UntypedDecl]
+parse = runParser (many declaration) [] "juno"

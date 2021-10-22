@@ -11,13 +11,25 @@ data Decl a
     | DOper OperatorDef String Params TypeAnnot (Expr a)
     | DVar Bool String TypeAnnot (Expr a)
     | DStmt (Stmt a)
+    deriving (Show)
 
 data Stmt a
     = SExpr (Expr a)
+    | SWhile
+    deriving (Show)
 
 data Expr a
     = ELit a Lit
+    | EVar a String
+    | EAssign a (Expr a) (Expr a)
+    | EBlock a [Decl a] (Expr a)
     | EIf a (Expr a) (Expr a) (Expr a)
+    | EMatch a (Expr a) [(Pattern, Expr a)]
+    | EBinOp a String (Expr a) (Expr a)
+    | EUnaOp a String (Expr a)
+    | EClosure a [String] Params TypeAnnot (Expr a)
+    | ECall a (Expr a) [Expr a]
+    deriving (Show)
 
 data Lit
     = LInt Integer
@@ -26,11 +38,20 @@ data Lit
     | LChar Char
     | LBool Bool
     | LUnit
+    deriving (Show)
 
 data Type
     = TCon String
     | TFunc [Type] Type
     | TVar String
+    deriving (Show)
+
+data Pattern
+    = PLit Lit
+    | PVar String
+    | PAs String Pattern
+    | PWild
+    deriving (Show)
 
 type UntypedDecl = Decl ()
 type TypedDecl = Decl Type
