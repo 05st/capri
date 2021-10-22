@@ -5,8 +5,7 @@ import Data.Functor.Identity
 import Text.Parsec
 import qualified Text.Parsec.Token as Token
 
-lexer :: Token.GenTokenParser String () Identity
-lexer = Token.makeTokenParser $ Token.LanguageDef
+tokenDef = Token.LanguageDef
     { Token.commentStart = "/*"
     , Token.commentEnd = "*/"
     , Token.commentLine = "//"
@@ -15,15 +14,29 @@ lexer = Token.makeTokenParser $ Token.LanguageDef
     , Token.identLetter = alphaNum <|> oneOf "_'"
     , Token.opStart = oneOf ":!@#$%^&*-+=<>./?\\|~"
     , Token.opLetter = oneOf ":!@#$%^&*-+=<>./?\\|~"
-    , Token.reservedNames = ["fn", "mut", "if", "match"]
+    , Token.reservedNames =
+        ["fn", "mut", "if", "match", "op",
+         "infixl", "infixr", "infix", "prefix", "postfix",
+         "i8", "i16", "i32", "i64",
+         "u8", "u16", "u32", "u64",
+         "f32", "f64",
+         "str", "bool", "unit"]
     , Token.reservedOpNames = ["=", ":=", "=>", "->", ":"]
     , Token.caseSensitive = True
     }
 
+lexer :: Token.GenTokenParser String s Identity
+lexer = Token.makeTokenParser tokenDef
+
+typeLexer :: Token.GenTokenParser String s Identity
+typeLexer = Token.makeTokenParser $ tokenDef
+    { Token.identStart = upper }
+
 identifier = Token.identifier lexer
+typeIdentifier = Token.identifier typeLexer
 reserved = Token.reserved lexer
 reservedOp = Token.reservedOp lexer
-operIdent = Token.operator lexer
+operator = Token.operator lexer
 parens = Token.parens lexer
 decimal = Token.decimal lexer
 octal = Token.octal lexer
