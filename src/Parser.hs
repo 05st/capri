@@ -29,7 +29,7 @@ funcDecl = do
     reservedOp "=>"
     expr <- expression
     semi
-    return $ DFunc name paramsParsed retAnnot expr
+    return $ DFunc () name paramsParsed retAnnot expr
 
 operDecl :: Parser UntypedDecl
 operDecl = do
@@ -45,7 +45,7 @@ operDecl = do
     semi
     let opdef = OperatorDef assocParsed precedence oper
     modifyState (opdef :)
-    return $ DOper opdef oper paramsParsed retAnnot expr
+    return $ DOper () opdef oper paramsParsed retAnnot expr
     where
         assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
             <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")

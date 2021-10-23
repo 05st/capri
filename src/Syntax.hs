@@ -1,4 +1,5 @@
 {-# Language PatternSynonyms #-}
+{-# Language DeriveFunctor #-}
 
 module Syntax where
 
@@ -7,16 +8,16 @@ import OperatorDef
 type TypeAnnot = Maybe Type
 type Params = [(String, TypeAnnot)]
 data Decl a
-    = DFunc String Params TypeAnnot (Expr a)
-    | DOper OperatorDef String Params TypeAnnot (Expr a)
+    = DFunc a String Params TypeAnnot (Expr a)
+    | DOper a OperatorDef String Params TypeAnnot (Expr a)
     | DVar Bool String TypeAnnot (Expr a)
     | DStmt (Stmt a)
-    deriving (Show)
+    deriving (Show, Functor)
 
 data Stmt a
     = SExpr (Expr a)
     | SWhile (Expr a) (Expr a)
-    deriving (Show)
+    deriving (Show, Functor)
 
 data Expr a
     = ELit a Lit
@@ -29,7 +30,7 @@ data Expr a
     | EUnaOp a String (Expr a)
     | EClosure a [String] Params TypeAnnot (Expr a)
     | ECall a (Expr a) [Expr a]
-    deriving (Show)
+    deriving (Show, Functor)
 
 data Lit
     = LInt Integer
@@ -45,7 +46,7 @@ data Type
     = TCon String
     | TFunc [Type] Type
     | TVar TVar
-    deriving (Show)
+    deriving (Show, Eq)
 
 data Constraint = CEqual Type Type | CClass Type [String] deriving (Show)
 data TypeScheme = Forall [TVar] Type deriving (Show)
