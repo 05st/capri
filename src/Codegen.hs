@@ -64,25 +64,27 @@ convertType = \case
 
 sizeof :: MonadState CEnv m => Type -> m Word32
 sizeof = \case
-    TCon "i8" -> 1
-    TCon "i16" -> 2
-    TCon "i32" -> 4
-    TCon "i64" -> 8
-    TCon "i128" -> 16
+    TCon "i8" -> return 1
+    TCon "i16" -> return 2
+    TCon "i32" -> return 4
+    TCon "i64" -> return 8
+    TCon "i128" -> return 16
     
-    TCon "u8" -> 1
-    TCon "u16" -> 2
-    TCon "u32" -> 4
-    TCon "u64" -> 8
-    TCon "u128" -> 16
+    TCon "u8" -> return 1
+    TCon "u16" -> return 2
+    TCon "u32" -> return 4
+    TCon "u64" -> return 8
+    TCon "u128" -> return 16
 
-    TCon "f16" -> 2
-    TCon "f32" -> 4
-    TCon "f64" -> 8
-    TCon "f128" -> 16
+    TCon "f16" -> return 2
+    TCon "f32" -> return 4
+    TCon "f64" -> return 8
+    TCon "f128" -> return 16
 
-    TCon "char" -> return AST.i8
-    TCon "bool" -> return AST.i1
-    TCon "unit" -> return AST.void
+    TCon "char" -> return 1
+    TCon "bool" -> return 1
+    TCon "unit" -> return 0
 
     other -> error $ "Unknown/not implemented primitive type " ++ show other
+
+

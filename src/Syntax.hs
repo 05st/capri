@@ -30,6 +30,7 @@ data Expr a
     | EUnaOp a String (Expr a)
     | EClosure a [String] Params TypeAnnot (Expr a)
     | ECall a (Expr a) [Expr a]
+    | ECast a Type (Expr a)
     deriving (Show, Functor)
 
 data Lit
@@ -46,6 +47,7 @@ data Type
     = TCon String
     | TFunc [Type] Type
     | TVar TVar
+    | TPtr Type
     deriving (Show, Eq)
 
 data Constraint = CEqual Type Type | CClass Type [String] deriving (Show)

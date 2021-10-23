@@ -128,7 +128,13 @@ assign = do
     EAssign () (EVar () var) <$> expression
 
 value :: Parser UntypedExpr
-value = try call <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+value = try (cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+
+cast :: Parser UntypedExpr
+cast = do
+    typ <- type'
+    arg <- parens expression
+    return $ ECast () typ arg
 
 call :: Parser UntypedExpr
 call = do
@@ -167,7 +173,9 @@ typeFunc = do
     TFunc inputTypes <$> type'
 
 typeBase :: Parser Type
-typeBase = typePrim <|> (TCon <$> typeIdentifier) <|> (TVar . TV <$> identifier) <|> parens type'
+typeBase = do
+    t <- typePrim <|> (TCon <$> typeIdentifier) <|> (TVar . TV <$> identifier) <|> parens type'
+    option t (TPtr t <$ (whitespace *> char '*' <* whitespace))
 
 typePrim :: Parser Type
 typePrim = choice $ map (\s -> TCon s <$ reserved s)

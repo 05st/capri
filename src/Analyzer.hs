@@ -201,6 +201,11 @@ inferExpr = \case
         rt <- fresh
         constrain (CEqual at (TFunc bts rt))
         return (ECall rt a' bs', rt)
+    ECast _ targ e -> do
+        (e', et) <- inferExpr e
+        case e' of
+            ELit _ (LInt n) -> return (ECast targ targ e', targ)
+            _ -> throwError $ "Invalid cast " ++ show et ++ " TO " ++ show targ
 
 inferLit :: Lit -> Type
 inferLit = \case
@@ -265,8 +270,8 @@ unify a@(TCon c1) b@(TCon c2)
     | c1 /= c2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = return Map.empty
 unify a@(TFunc pts rt) b@(TFunc pts2 rt2) = unifyMany (rt : pts) (rt2 : pts2)
-unify a@(TFunc _ _) t = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show t
-unify t a@(TFunc _ _) = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show t
+unify a@(TPtr t) b@(TPtr t2) = unify t t2
+unify a b = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
 unifyMany :: [Type] -> [Type] -> Solve Substitution
 unifyMany [] [] = return Map.empty
