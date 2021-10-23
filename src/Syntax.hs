@@ -15,7 +15,7 @@ data Decl a
 
 data Stmt a
     = SExpr (Expr a)
-    | SWhile
+    | SWhile (Expr a) (Expr a)
     deriving (Show)
 
 data Expr a

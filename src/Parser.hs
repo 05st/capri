@@ -60,7 +60,13 @@ varDecl = do
 
 -- Statements
 statement :: Parser UntypedStmt
-statement = SExpr <$> (expression <* semi)
+statement = whileStmt <|> (SExpr <$> (expression <* semi))
+
+whileStmt :: Parser UntypedStmt
+whileStmt = do
+    reserved "while"
+    cond <- expression
+    SWhile cond <$> (expression <* semi)
 
 -- Expressions
 expression :: Parser UntypedExpr
@@ -98,7 +104,14 @@ ifExpr = do
 matchExpr :: Parser UntypedExpr
 matchExpr = do
     reserved "match"
-    undefined
+    mexpr <- expression
+    EMatch () mexpr <$> braces (sepBy1 matchBranch comma)
+    where
+        matchBranch = do
+            pat <- pattern
+            whitespace
+            reservedOp "->"
+            (pat,) <$> expression
 
 closure :: Parser UntypedExpr
 closure = do
@@ -160,6 +173,26 @@ typePrim :: Parser Type
 typePrim = choice $ map (\s -> TCon s <$ reserved s)
     ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "str", "bool", "unit"]
 
+-- Parse patterns
+pattern :: Parser Pattern
+pattern = parens pattern <|> patternWild <|> try patternAs <|> patternVar <|> patternLit
+
+patternWild :: Parser Pattern
+patternWild = PWild <$ reserved "_"
+
+patternVar :: Parser Pattern
+patternVar = PVar <$> identifier
+
+patternAs :: Parser Pattern
+patternAs = do
+    var <- identifier
+    reservedOp "@"
+    PAs var <$> pattern
+
+patternLit :: Parser Pattern
+patternLit = PLit <$> literal
+
+-- Other
 typeAnnot :: Parser Type
 typeAnnot = reservedOp ":" *> type'
 
