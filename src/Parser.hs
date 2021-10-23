@@ -167,11 +167,11 @@ typeFunc = do
     TFunc inputTypes <$> type'
 
 typeBase :: Parser Type
-typeBase = typePrim <|> (TCon <$> typeIdentifier) <|> (TVar <$> identifier) <|> parens type'
+typeBase = typePrim <|> (TCon <$> typeIdentifier) <|> (TVar . TV <$> identifier) <|> parens type'
 
 typePrim :: Parser Type
 typePrim = choice $ map (\s -> TCon s <$ reserved s)
-    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "str", "bool", "unit"]
+    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "str", "char", "bool", "unit"]
 
 -- Parse patterns
 pattern :: Parser Pattern

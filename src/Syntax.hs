@@ -40,11 +40,15 @@ data Lit
     | LUnit
     deriving (Show)
 
+newtype TVar = TV String deriving (Show, Eq, Ord)
 data Type
     = TCon String
     | TFunc [Type] Type
-    | TVar String
+    | TVar TVar
     deriving (Show)
+
+data Constraint = CEqual Type Type | CClass Type [String] deriving (Show)
+data TypeScheme = Forall [TVar] Type deriving (Show)
 
 data Pattern
     = PLit Lit
@@ -74,5 +78,6 @@ pattern TFloat32 = TCon "f32"
 pattern TFloat64 = TCon "f64"
 
 pattern TStr = TCon "str"
+pattern TChar = TCon "char"
 pattern TBool = TCon "bool"
 pattern TUnit = TCon "unit"
