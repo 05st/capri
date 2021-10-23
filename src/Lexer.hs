@@ -17,9 +17,9 @@ tokenDef = Token.LanguageDef
     , Token.reservedNames =
         ["fn", "mut", "if", "else", "match", "while", "op",
          "infixl", "infixr", "infix", "prefix", "postfix",
-         "i8", "i16", "i32", "i64",
-         "u8", "u16", "u32", "u64",
-         "f32", "f64",
+         "i8", "i16", "i32", "i64", "i128",
+         "u8", "u16", "u32", "u64", "u128",
+         "f16", "f32", "f64", "f128",
          "str", "char", "bool", "unit",
          "true", "false", "()",
          "_"]

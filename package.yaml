@@ -24,6 +24,7 @@ dependencies:
 - parsec
 - containers
 - mtl
+- llvm-hs-pure
 
 library:
   source-dirs: src

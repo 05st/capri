@@ -3,7 +3,7 @@ module Main where
 import System.Environment
 
 import Parser
-import Infer
+import Analyzer 
 
 main :: IO ()
 main = do

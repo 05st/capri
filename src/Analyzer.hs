@@ -1,7 +1,7 @@
 {-# Language TupleSections #-}
 {-# Language LambdaCase #-}
 
-module Infer where
+module Analyzer (infer) where
 
 import Data.Maybe
 import Data.Functor.Identity
