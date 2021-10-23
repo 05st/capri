@@ -60,7 +60,12 @@ varDecl = do
 
 -- Statements
 statement :: Parser UntypedStmt
-statement = whileStmt <|> (SExpr <$> (expression <* semi))
+statement = retStmt <|> whileStmt <|> (SExpr <$> (expression <* semi))
+
+retStmt :: Parser UntypedStmt
+retStmt = do
+    reserved "return"
+    SRet <$> (expression <* semi)
 
 whileStmt :: Parser UntypedStmt
 whileStmt = do
@@ -91,7 +96,7 @@ expression = do
         toAssoc _ = undefined
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> closure <|> try assign <|> value
+term = ifExpr <|> matchExpr <|> closure <|> try assign <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -123,17 +128,27 @@ closure = do
 
 assign :: Parser UntypedExpr
 assign = do
-    var <- value
+    var <- deref <|> value
     reservedOp "="
     EAssign () var <$> expression
 
+deref :: Parser UntypedExpr
+deref = do
+    whitespace *> char '*' <* whitespace
+    EDeref () <$> value
+
+ref :: Parser UntypedExpr
+ref = do
+    whitespace *> char '&' <* whitespace
+    ERef () <$> value
+
 value :: Parser UntypedExpr
-value = do
-    deref <- option False (True <$ (whitespace *> char '*' <* whitespace))
-    expr <- try (cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
-    if deref
-        then return $ EDeref () expr
-        else return expr
+value = try (sizeof <|> cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+
+sizeof :: Parser UntypedExpr 
+sizeof = do
+    reserved "sizeof"
+    ESizeof () <$> type'
 
 cast :: Parser UntypedExpr
 cast = do
@@ -214,4 +229,7 @@ params = parens (sepBy ((,) <$> identifier <*> optionMaybe typeAnnot) comma)
 
 -- Run parser
 parse :: String -> Either ParseError [UntypedDecl]
-parse = runParser (many declaration) [] "juno"
+parse = runParser (many declaration) builtinOpers "juno"
+
+builtinOpers :: [OperatorDef]
+builtinOpers = [OperatorDef ALeft 5 "+"]

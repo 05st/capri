@@ -1,4 +1,5 @@
 {-# Language LambdaCase #-}
+{-# Language TupleSections #-}
 {-# Language FlexibleContexts #-}
 
 module Codegen where
@@ -21,6 +22,8 @@ import LLVM.Prelude (ShortByteString)
 
 import qualified Data.Map as Map
 import Data.Word (Word32)
+import Data.Char (ord)
+
 import Control.Monad.State
 
 import Syntax
@@ -39,26 +42,26 @@ type CGen = L.IRBuilderT LLVM
 
 convertType :: MonadState CEnv m => Type -> m AST.Type
 convertType = \case
-    TCon "i8" -> return AST.i8
-    TCon "i16" -> return AST.i16
-    TCon "i32" -> return AST.i32
-    TCon "i64" -> return AST.i64
-    TCon "i128" -> return AST.i128
+    TInt8 -> return AST.i8
+    TInt16 -> return AST.i16
+    TInt32 -> return AST.i32
+    TInt64 -> return AST.i64
+    TInt128 -> return AST.i128
     
-    TCon "u8" -> return AST.i8
-    TCon "u16" -> return AST.i16
-    TCon "u32" -> return AST.i32
-    TCon "u64" -> return AST.i64
-    TCon "u128" -> return AST.i128
+    TUInt8 -> return AST.i8
+    TUInt16 -> return AST.i16
+    TUInt32 -> return AST.i32
+    TUInt64 -> return AST.i64
+    TUInt128 -> return AST.i128
 
-    TCon "f16" -> return AST.half
-    TCon "f32" -> return AST.float
-    TCon "f64" -> return AST.double
-    TCon "f128" -> return AST.fp128
+    TFloat16 -> return AST.half
+    TFloat32 -> return AST.float
+    TFloat64 -> return AST.double
+    TFloat128 -> return AST.fp128
 
-    TCon "char" -> return AST.i8
-    TCon "bool" -> return AST.i1
-    TCon "unit" -> return AST.void
+    TChar -> return AST.i8
+    TBool -> return AST.i1
+    TUnit -> return AST.void
 
     TPtr t -> AST.ptr <$> convertType t
 
@@ -66,33 +69,79 @@ convertType = \case
 
 sizeof :: MonadState CEnv m => Type -> m Word32
 sizeof = \case
-    TCon "i8" -> return 1
-    TCon "i16" -> return 2
-    TCon "i32" -> return 4
-    TCon "i64" -> return 8
-    TCon "i128" -> return 16
+    TInt8 -> return 1
+    TInt16 -> return 2
+    TInt32 -> return 4
+    TInt64 -> return 8
+    TInt128 -> return 16
     
-    TCon "u8" -> return 1
-    TCon "u16" -> return 2
-    TCon "u32" -> return 4
-    TCon "u64" -> return 8
-    TCon "u128" -> return 16
+    TUInt8 -> return 1
+    TUInt16 -> return 2
+    TUInt32 -> return 4
+    TUInt64 -> return 8
+    TUInt128 -> return 16
 
-    TCon "f16" -> return 2
-    TCon "f32" -> return 4
-    TCon "f64" -> return 8
-    TCon "f128" -> return 16
+    TFloat16 -> return 2
+    TFloat32 -> return 4
+    TFloat64 -> return 8
+    TFloat128 -> return 16
 
-    TCon "char" -> return 1
-    TCon "bool" -> return 1
-    TCon "unit" -> return 0
+    TChar -> return 1
+    TBool -> return 1
+    TUnit -> return 0
 
     TPtr _ -> return 8
 
     other -> error $ "Unknown/not implemented primitive type " ++ show other
 
 cgenExpr :: TypedExpr -> CGen Operand
-cgenExpr (EVar t name) = gets ((Map.! name) . operands)
-cgenExpr _ = undefined
+cgenExpr = \case
+    -- lvalues
+    EVar _ name -> gets ((Map.! name) . operands)
+    EDeref _ e -> cgenExpr e
+    -- literals
+    ELit _ (LInt n) -> return $ L.int32 (fromIntegral n)
+    ELit _ (LFloat f) -> return $ L.double f
+    ELit _ (LChar c) -> return $ L.int8 (fromIntegral (ord c))
+    ELit _ (LBool b) -> return $ L.bit (if b then 1 else 0)
+    -- sizeof
+    ESizeof _ t -> L.int32 . fromIntegral <$> sizeof t
+    -- reference
+    ERef _ e -> cgenExpr e -- (e is an lvalue)
+    -- binary ops
+    EAssign _ l r -> do
+        l' <- cgenExpr l -- l is an lvalue
+        r' <- cgenExpr r
+        L.store l' 0 r'
+        return r'
+    EBinOp _ op l r -> do
+        l' <- cgenExpr l
+        r' <- cgenExpr r
+        case op of
+            "+" -> L.add l' r'
+            _ -> error $ "Custom operators not implemented fully (" ++ op ++ ")"
+    -- function calls
+    ECall _ f args -> do
+        args' <- traverse (fmap (,[]) . cgenExpr) args
+        f' <- cgenExpr f
+        L.call f' args'
+    -- casts
+    ECast _ t e -> do
+        let et = typeOfExpr e
+        e' <- cgenExpr e
+        llvmType <- convertType t
+        case (et, t) of
+            (TPtr _, TPtr _) -> L.bitcast e' llvmType
+            (TInt64, TPtr _) -> L.inttoptr e' llvmType
+            (TInt32, TPtr _) -> L.inttoptr e' llvmType
+            (TPtr _, TInt64) -> L.ptrtoint e' llvmType
+            (TPtr _, TInt32) -> L.ptrtoint e' llvmType
+            (TInt32, TFloat32) -> L.sitofp e' llvmType
+            _ -> error "Invalid cast"
+    -- other
+    other -> error $ "Unknown/not implemented expression " ++ show other
 
-
+cgenStmt :: TypedStmt -> CGen ()
+cgenStmt = \case
+    SExpr e -> void (cgenExpr e)
+    other -> error $ "Unknown/not implemented statement " ++ show other

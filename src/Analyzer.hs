@@ -48,7 +48,7 @@ infer decls =
 
 inferTopLevel :: [UntypedDecl] -> [(UntypedDecl, Maybe Type)] -> Infer [TypedDecl]
 inferTopLevel [] [] = return []
-inferTopLevel [] l = inferDecls l []
+inferTopLevel [] l = fst <$> inferDecls l [] []
 inferTopLevel (DStmt _ : _) _ = throwError "No top-level statements allowed"
 inferTopLevel (decl : rest) l =
     case decl of
@@ -64,6 +64,7 @@ inferTopLevel (decl : rest) l =
                 Nothing -> return ()
                 Just ta -> constrain (CEqual ta t)
             local (Map.insert name (Forall [] t, isMut)) (inferTopLevel rest ((d, Just t) : l))
+        DStmt (SRet _) -> throwError "Top-level return statement"
         DStmt _ -> undefined
 
 inferTopLevelFn :: String -> Params -> TypeAnnot -> UntypedExpr -> Infer Type
@@ -78,12 +79,15 @@ inferTopLevelFn name params tann expr = do
     return (TFunc pts rt)
 
 -- TODO: clean
-inferDecls :: [(UntypedDecl, Maybe Type)] -> [TypedDecl] -> Infer [TypedDecl]
-inferDecls [] l = return l
-inferDecls ((DStmt s, t) : rest) l = do
+inferDecls :: [(UntypedDecl, Maybe Type)] -> [TypedDecl] -> [Type] -> Infer ([TypedDecl], [Type])
+inferDecls [] l typs = return (l, typs)
+inferDecls ((DStmt (SRet e), t) : rest) l typs = do
+    (e', et) <- inferExpr e
+    inferDecls rest (DStmt (SRet e') : l) (et : typs)
+inferDecls ((DStmt s, t) : rest) l typs = do
     dstmt <- DStmt <$> inferStmt s
-    inferDecls rest (dstmt : l)
-inferDecls ((DFunc _ name params tann expr, t) : rest) l = do
+    inferDecls rest (dstmt : l) typs
+inferDecls ((DFunc _ name params tann expr, t) : rest) l typs = do
     env <- ask
     ((expr', et), consts) <- listen (inferFn name params tann expr)
     subst <- liftEither (runSolve consts)
@@ -94,17 +98,18 @@ inferDecls ((DFunc _ name params tann expr, t) : rest) l = do
     let (_, panns) = unzip params
     sequence_ [constrain (CEqual pt pann) | (pt, pann) <- zip pts (filterNothings panns)]
     when (isJust t) (constrain $ CEqual et' (fromJust t))
-    local (Map.insert name (scheme, False) . Map.delete name) (inferDecls rest (DFunc et' name params tann expr' : l))
-inferDecls ((DVar isMut name tann expr, t): rest) l = do
+    local (Map.insert name (scheme, False) . Map.delete name) (inferDecls rest (DFunc et' name params tann expr' : l) typs)
+inferDecls ((DVar isMut name tann expr, t) : rest) l typs = do
     env <- ask
+    when (isJust (Map.lookup name env)) (throwError $ "Already defined variable " ++ name)
     ((expr', et), consts) <- listen (inferExpr expr)
     subst <- liftEither (runSolve consts)
     let et' = apply subst et
         scheme = generalize env et'
     when (isJust tann) (constrain $ CEqual (fromJust tann) et')
     when (isJust t) (constrain $ CEqual et' (fromJust t))
-    local (Map.insert name (scheme, isMut) . Map.delete name) (inferDecls rest (DVar isMut name tann expr' : l))
-inferDecls ((DOper _ opdef op params tann expr, t) : rest) l = do
+    local (Map.insert name (scheme, isMut) . Map.delete name) (inferDecls rest (DVar isMut name tann expr' : l) typs)
+inferDecls ((DOper _ opdef op params tann expr, t) : rest) l typs = do
     env <- ask
     ((expr', et), consts) <- listen (inferFn op params tann expr)
     subst <- liftEither (runSolve consts)
@@ -115,7 +120,7 @@ inferDecls ((DOper _ opdef op params tann expr, t) : rest) l = do
     let (_, panns) = unzip params
     sequence_ [constrain (CEqual pt pann) | (pt, pann) <- zip pts (filterNothings panns)]
     when (isJust t) (constrain $ CEqual et' (fromJust t))
-    local (Map.insert op (scheme, False) . Map.delete op) (inferDecls rest (DFunc et' op params tann expr' : l))
+    local (Map.insert op (scheme, False) . Map.delete op) (inferDecls rest (DOper et' opdef op params tann expr' : l) typs)
 
 inferFn :: String -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
 inferFn name params tann expr = do
@@ -134,6 +139,7 @@ inferStmt = \case
         (b', bt) <- inferExpr b
         constrain (CEqual ct TBool)
         return (SWhile c' b')
+    SRet e -> throwError "Return statement outside of block but also not in top-level (?)"
 
 inferExpr :: UntypedExpr -> Infer (TypedExpr, Type)
 inferExpr = \case
@@ -154,9 +160,14 @@ inferExpr = \case
         constrain (CEqual at bt)
         return (EAssign at a' b', at)
     EBlock _ decls res -> do
-        decls' <- inferDecls (zip decls (repeat Nothing)) []
         (res', rt) <- inferExpr res
-        return (EBlock rt decls' res', rt)
+        (decls', ret_types) <- inferDecls (zip decls (repeat Nothing)) [] []
+        case ret_types of
+            [] -> do
+                return (EBlock rt (reverse decls') res', rt)
+            (t : rest) -> do
+                sequence_ [constrain (CEqual t t') | t' <- rest]
+                return (EBlock t (reverse decls') res', t)
     EIf _ c a b -> do
         (c', ct) <- inferExpr c
         (a', at) <- inferExpr a
@@ -171,12 +182,19 @@ inferExpr = \case
             [] -> throwError "Empty match expression"
             (bt : rest) -> (EMatch bt m' bs', bt) <$ mapM_ (constrain . CEqual bt) rest
     EBinOp _ op a b -> do
-        opt <- lookupType op
         (a', at) <- inferExpr a
         (b', bt) <- inferExpr b
-        rt <- fresh
-        constrain (CEqual opt (TFunc [at, bt] rt))
-        return (EBinOp rt op a' b', rt)
+        case op of
+            "+" -> do -- TODO
+                constrain (CEqual at TInt32)
+                constrain (CEqual bt TInt32)
+                return (EBinOp TInt32 op a' b', TInt32)
+            _ -> do
+                opt <- lookupType op
+                rt <- fresh
+                let ft = TFunc [at, bt] rt
+                constrain (CEqual opt ft)
+                return (ECall rt (EVar ft op) [a', b'], rt)
     EUnaOp _ op a -> do
         opt <- lookupType op
         (a', at) <- inferExpr a
@@ -212,11 +230,18 @@ inferExpr = \case
         case et of
             TPtr t -> return (EDeref t e', t)
             _ -> throwError "Cannot dereference non-pointer"
+    ERef _ e -> do
+        (e', et) <- inferExpr e
+        case e' of
+            EVar _ s -> return (ERef (TPtr et) e', TPtr et)
+            _ -> throwError "Cannot reference non-variable"
+    ESizeof _ t -> do
+        return (ESizeof TInt32 t, TInt32)
 
 inferLit :: Lit -> Type
 inferLit = \case
     LInt _ -> TInt32
-    LFloat _ -> TFloat32
+    LFloat _ -> TFloat64
     LString _ -> TStr
     LChar _ -> TChar
     LBool _ -> TBool

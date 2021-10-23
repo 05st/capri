@@ -1,5 +1,6 @@
 {-# Language PatternSynonyms #-}
 {-# Language DeriveFunctor #-}
+{-# Language LambdaCase #-}
 
 module Syntax where
 
@@ -16,6 +17,7 @@ data Decl a
 
 data Stmt a
     = SExpr (Expr a)
+    | SRet (Expr a)
     | SWhile (Expr a) (Expr a)
     deriving (Show, Functor)
 
@@ -32,6 +34,8 @@ data Expr a
     | ECall a (Expr a) [Expr a]
     | ECast a Type (Expr a)
     | EDeref a (Expr a)
+    | ERef a (Expr a)
+    | ESizeof a Type
     deriving (Show, Functor)
 
 data Lit
@@ -61,6 +65,23 @@ data Pattern
     | PWild
     deriving (Show)
 
+typeOfExpr :: TypedExpr -> Type
+typeOfExpr = \case
+    ELit t _ -> t
+    EVar t _ -> t
+    EAssign t _ _ -> t
+    EBlock t _ _ -> t
+    EIf t _ _ _ -> t
+    EMatch t _ _ -> t
+    EBinOp t _ _ _ -> t
+    EUnaOp t _ _ -> t
+    EClosure t _ _ _ _ -> t
+    ECall t _ _ -> t
+    ECast t _ _ -> t
+    EDeref t _ -> t
+    ERef t _ -> t
+    ESizeof t _ -> t
+
 type UntypedDecl = Decl ()
 type TypedDecl = Decl Type
 type UntypedStmt = Stmt ()
@@ -72,14 +93,18 @@ pattern TInt8 = TCon "i8"
 pattern TInt16 = TCon "i16"
 pattern TInt32 = TCon "i32"
 pattern TInt64 = TCon "i64"
+pattern TInt128 = TCon "i128"
 
 pattern TUInt8 = TCon "u8"
 pattern TUInt16 = TCon "u16"
 pattern TUInt32 = TCon "u32"
 pattern TUInt64 = TCon "u64"
+pattern TUInt128 = TCon "u128"
 
+pattern TFloat16 = TCon "f16"
 pattern TFloat32 = TCon "f32"
 pattern TFloat64 = TCon "f64"
+pattern TFloat128 = TCon "f128"
 
 pattern TStr = TCon "str"
 pattern TChar = TCon "char"
