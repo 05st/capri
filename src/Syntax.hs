@@ -31,6 +31,7 @@ data Expr a
     | EClosure a [String] Params TypeAnnot (Expr a)
     | ECall a (Expr a) [Expr a]
     | ECast a Type (Expr a)
+    | EDeref a (Expr a)
     deriving (Show, Functor)
 
 data Lit

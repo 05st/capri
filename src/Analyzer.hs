@@ -146,12 +146,13 @@ inferExpr = \case
         case a' of
             EVar _ n -> do
                 isMut <- lookupMut n
-                if isMut then do
-                    (b', bt) <- inferExpr b
-                    constrain (CEqual at bt)
-                    return (EAssign at a' b', at)
+                if isMut then return ()
                 else throwError $ "Cannot assign to immutable variable " ++ n
-            _ -> throwError "Cannot assign to non-variable"
+            EDeref _ _ -> return ()
+            _ -> throwError "Cannot assign to non-lvalue"
+        (b', bt) <- inferExpr b
+        constrain (CEqual at bt)
+        return (EAssign at a' b', at)
     EBlock _ decls res -> do
         decls' <- inferDecls (zip decls (repeat Nothing)) []
         (res', rt) <- inferExpr res
@@ -206,6 +207,11 @@ inferExpr = \case
         case e' of
             ELit _ (LInt n) -> return (ECast targ targ e', targ)
             _ -> throwError $ "Invalid cast " ++ show et ++ " TO " ++ show targ
+    EDeref _ e -> do
+        (e', et) <- inferExpr e
+        case et of
+            TPtr t -> return (EDeref t e', t)
+            _ -> throwError "Cannot dereference non-pointer"
 
 inferLit :: Lit -> Type
 inferLit = \case

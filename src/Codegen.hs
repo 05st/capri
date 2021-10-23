@@ -60,6 +60,8 @@ convertType = \case
     TCon "bool" -> return AST.i1
     TCon "unit" -> return AST.void
 
+    TPtr t -> AST.ptr <$> convertType t
+
     other -> error $ "Unknown/not implemented primitive type " ++ show other
 
 sizeof :: MonadState CEnv m => Type -> m Word32
@@ -85,6 +87,12 @@ sizeof = \case
     TCon "bool" -> return 1
     TCon "unit" -> return 0
 
+    TPtr _ -> return 8
+
     other -> error $ "Unknown/not implemented primitive type " ++ show other
+
+cgenExpr :: TypedExpr -> CGen Operand
+cgenExpr (EVar t name) = gets ((Map.! name) . operands)
+cgenExpr _ = undefined
 
 

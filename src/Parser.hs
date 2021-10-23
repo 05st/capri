@@ -123,12 +123,17 @@ closure = do
 
 assign :: Parser UntypedExpr
 assign = do
-    var <- identifier
+    var <- value
     reservedOp "="
-    EAssign () (EVar () var) <$> expression
+    EAssign () var <$> expression
 
 value :: Parser UntypedExpr
-value = try (cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+value = do
+    deref <- option False (True <$ (whitespace *> char '*' <* whitespace))
+    expr <- try (cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+    if deref
+        then return $ EDeref () expr
+        else return expr
 
 cast :: Parser UntypedExpr
 cast = do
