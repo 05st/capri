@@ -21,10 +21,9 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
-- parsec
-- containers
 - mtl
-- llvm-hs-pure
+- containers
+- parsec
 
 library:
   source-dirs: src
