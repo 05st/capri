@@ -186,13 +186,13 @@ block = braces $ do
 
 -- Literals
 literal :: Parser Lit
-literal = (LInt <$> integer) <|> (LFloat <$> float)
+literal = try (LFloat <$> float) <|> (LInt <$> integer) 
     <|> (LChar <$> charLiteral) <|> (LString <$> stringLiteral)
     <|> (LBool True <$ reserved "true") <|> (LBool False <$ reserved "false")
     <|> (LUnit <$ reserved "()")
 
 integer :: Parser Integer
-integer = decimal <|> try octal <|> try hexadecimal
+integer = intLit <|> try octal <|> try hexadecimal
 
 -- Parse types
 type' :: Parser Type
@@ -244,4 +244,7 @@ parse :: T.Text -> Either ParseError [UntypedDecl]
 parse = runParser (many1 declaration) builtinOpers "juno"
 
 builtinOpers :: [OperatorDef]
-builtinOpers = [OperatorDef ALeft 5 "+"]
+builtinOpers =
+    [OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
+     OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/",
+     OperatorDef ALeft 2 "==", OperatorDef ALeft 2 "!="]

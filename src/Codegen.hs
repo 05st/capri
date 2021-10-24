@@ -59,9 +59,11 @@ tellnl = tell . (<> "\n")
 initGen :: [TypedDecl] -> Gen ()
 initGen decls = do
     tellnl "// Juno"
+    tellnl "#include <stdlib.h>"
     tellnl "#include <stdio.h>"
     tellnl "#include <stdint.h>"
     tellnl "#include <stdbool.h>"
+    tellnl "#include <math.h>"
     tellnl "typedef char UNIT;"
     genTopLevelDecls decls
 
@@ -104,7 +106,7 @@ genExpr = \case
         genExpr l
         tell " = "
         genExpr r
-    EBlock _ decls res -> do
+    EBlock _ decls res -> do -- TODO
         tellnl "({"
         mapM_ genDecl decls
         genExpr res
@@ -119,9 +121,9 @@ genExpr = \case
         tell "))"
     EBinOp _ op l r -> do
         case op of
-            "+" -> do
+            _ | op `elem` ["+", "-", "*", "/", "==", "!="] -> do
                 genExpr l
-                tell " + "
+                tell (fromText op)
                 genExpr r
             _ -> undefined
     ECall _ f args -> do
@@ -133,8 +135,9 @@ genExpr = \case
         tell $ "(" <> convertType t <> ")"
         genExpr e
     EDeref _ e -> do
-        tell "*"
+        tell "*("
         genExpr e
+        tell ")"
     ERef _ e -> do
         tell "&"
         genExpr e

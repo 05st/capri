@@ -12,6 +12,8 @@ import qualified Data.Set as Set
 import Control.Monad.RWS
 import Control.Monad.Except
 
+import Debug.Trace
+
 import Syntax
 import Substitution
 
@@ -201,10 +203,17 @@ inferExpr = \case
         (a', at) <- inferExpr a
         (b', bt) <- inferExpr b
         case op of
-            "+" -> do -- TODO
-                constrain (CEqual at TInt32)
-                constrain (CEqual bt TInt32)
-                return (EBinOp TInt32 op a' b', TInt32)
+            _ | op `elem` ["+", "-", "*", "/"] -> do -- TODO
+                case (at, bt) of
+                    (TPtr _, TInt32) -> return ()
+                    (TPtr _, TInt64) -> return ()
+                    (TInt32, TPtr _) -> return ()
+                    (TInt64, TPtr _) -> return ()
+                    _ -> constrain (CEqual bt at)
+                return (EBinOp at op a' b', at)
+            _ | op `elem` ["==", "!="] -> do
+                constrain (CEqual bt at)
+                return (EBinOp TBool op a' b', TBool)
             _ -> do
                 opt <- lookupType op
                 rt <- fresh
@@ -242,9 +251,22 @@ inferExpr = \case
         return (ECall rt a' bs', rt)
     ECast _ targ e -> do
         (e', et) <- inferExpr e
-        case e' of
-            ELit _ (LInt n) -> return (ECast targ targ e', targ)
+        return (ECast targ targ e', targ) -- TODO
+        {-
+        let cast = (et, targ)
+        case cast of
+            (TInt32, TPtr _) -> return (ECast targ targ e', targ)
+            (TInt64, TPtr _) -> return (ECast targ targ e', targ)
+            (TPtr _, TInt32) -> return (ECast targ targ e', targ)
+            (TPtr _, TInt64) -> return (ECast targ targ e', targ)
+            _ | cast `elem` [
+                (TInt32, TInt64), (TInt64, TInt32),
+                (TFloat32, TFloat64), (TFloat64, TFloat32),
+                (TFloat32, TInt32), (TFloat64, TInt32),
+                (TInt32, TFloat32)] ->
+                return (ECast targ targ e', targ)
             _ -> throwError $ "Invalid cast " ++ show et ++ " TO " ++ show targ
+        -}
     EDeref _ e -> do
         (e', et) <- inferExpr e
         case et of

@@ -26,7 +26,7 @@ tokenDef = Token.LanguageDef
          "str", "char", "bool", "unit",
          "true", "false", "()",
          "_"]
-    , Token.reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+"]
+    , Token.reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!="]
     , Token.caseSensitive = True
     }
 
@@ -43,6 +43,7 @@ reserved = Token.reserved lexer
 reservedOp = Token.reservedOp lexer
 operator = T.pack <$> Token.operator lexer
 parens = Token.parens lexer
+intLit = Token.integer lexer
 decimal = Token.decimal lexer
 octal = Token.octal lexer
 hexadecimal = Token.hexadecimal lexer
