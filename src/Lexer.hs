@@ -1,5 +1,8 @@
+{-# Language OverloadedStrings #-}
+
 module Lexer where
 
+import qualified Data.Text as T
 import Data.Functor.Identity
 
 import Text.Parsec
@@ -27,18 +30,18 @@ tokenDef = Token.LanguageDef
     , Token.caseSensitive = True
     }
 
-lexer :: Token.GenTokenParser String s Identity
+lexer :: Token.GenTokenParser T.Text s Identity
 lexer = Token.makeTokenParser tokenDef
 
-typeLexer :: Token.GenTokenParser String s Identity
+typeLexer :: Token.GenTokenParser T.Text s Identity
 typeLexer = Token.makeTokenParser $ tokenDef
     { Token.identStart = upper }
 
-identifier = Token.identifier lexer
-typeIdentifier = Token.identifier typeLexer
+identifier = T.pack <$> Token.identifier lexer
+typeIdentifier = T.pack <$> Token.identifier typeLexer
 reserved = Token.reserved lexer
 reservedOp = Token.reservedOp lexer
-operator = Token.operator lexer
+operator = T.pack <$> Token.operator lexer
 parens = Token.parens lexer
 decimal = Token.decimal lexer
 octal = Token.octal lexer
@@ -53,4 +56,4 @@ dot = Token.dot lexer
 angles = Token.angles lexer
 brackets = Token.brackets lexer
 charLiteral = Token.charLiteral lexer
-stringLiteral = Token.stringLiteral lexer
+stringLiteral = T.pack <$> Token.stringLiteral lexer

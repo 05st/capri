@@ -1,5 +1,8 @@
+{-# Language OverloadedStrings #-}
+
 module Main where
 
+import qualified Data.Text as T
 import System.Environment
 
 import Parser
@@ -10,7 +13,7 @@ main :: IO ()
 main = do
     args <- getArgs
     input <- readFile (head args)
-    case parse input of
+    case parse (T.pack input) of
         Right decls ->
             case infer decls of
                 Right annotated -> do

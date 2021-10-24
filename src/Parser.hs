@@ -1,3 +1,5 @@
+{-# Language OverloadedStrings #-}
+{-# Language LambdaCase #-}
 {-# Language TupleSections #-}
 
 module Parser (Parser.parse) where
@@ -5,6 +7,7 @@ module Parser (Parser.parse) where
 import Data.List
 import Data.Function
 import Data.Functor.Identity
+import qualified Data.Text as T
 
 import Text.Parsec
 import Text.Parsec.Expr
@@ -14,7 +17,7 @@ import Syntax
 import OperatorDef
 import qualified Text.Parsec.Prim as Parsec
 
-type Parser a = ParsecT String [OperatorDef] Identity a
+type Parser a = ParsecT T.Text [OperatorDef] Identity a
 
 -- Declarations
 declaration :: Parser UntypedDecl
@@ -87,9 +90,9 @@ expression = do
             ANone -> infixOp oper (EBinOp () oper) (toAssoc assoc)
             APrefix -> prefixOp oper (EUnaOp () oper)
             APostfix -> postfixOp oper (EUnaOp () oper)
-        infixOp name f = Infix (reservedOp name >> return f)
-        prefixOp name f = Prefix (reservedOp name >> return f)
-        postfixOp name f = Postfix (reservedOp name >> return f)
+        infixOp name f = Infix (reservedOp (T.unpack name) >> return f)
+        prefixOp name f = Prefix (reservedOp (T.unpack name) >> return f)
+        postfixOp name f = Postfix (reservedOp (T.unpack name) >> return f)
         toAssoc ALeft = AssocLeft
         toAssoc ARight = AssocRight
         toAssoc ANone = AssocNone
@@ -198,7 +201,7 @@ typeBase = do
     option t (TPtr t <$ (whitespace *> char '*' <* whitespace))
 
 typePrim :: Parser Type
-typePrim = choice $ map (\s -> TCon s <$ reserved s)
+typePrim = choice $ map (\s -> TCon s <$ reserved (T.unpack s))
     ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "str", "char", "bool", "unit"]
 
 -- Parse patterns
@@ -224,11 +227,11 @@ patternLit = PLit <$> literal
 typeAnnot :: Parser Type
 typeAnnot = reservedOp ":" *> type'
 
-params :: Parser [(String, Maybe Type)]
+params :: Parser [(T.Text, Maybe Type)]
 params = parens (sepBy ((,) <$> identifier <*> optionMaybe typeAnnot) comma)
 
 -- Run parser
-parse :: String -> Either ParseError [UntypedDecl]
+parse :: T.Text -> Either ParseError [UntypedDecl]
 parse = runParser (many1 declaration) builtinOpers "juno"
 
 builtinOpers :: [OperatorDef]

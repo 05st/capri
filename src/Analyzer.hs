@@ -1,8 +1,10 @@
-{-# Language TupleSections #-}
+{-# Language OverloadedStrings #-}
 {-# Language LambdaCase #-}
+{-# Language TupleSections #-}
 
 module Analyzer (infer) where
 
+import qualified Data.Text as T
 import Data.Maybe
 import Data.Functor.Identity
 import qualified Data.Map as Map
@@ -13,7 +15,7 @@ import Control.Monad.Except
 import Syntax
 import Substitution
 
-type TEnv = Map.Map String (TypeScheme, Bool)
+type TEnv = Map.Map T.Text (TypeScheme, Bool)
 type Infer = RWST TEnv [Constraint] Int (Except String)
 
 -- Inferring
@@ -21,7 +23,7 @@ fresh :: Infer Type
 fresh = do
     n <- get
     put (n + 1)
-    return . TVar . TV $ names !! n
+    return . TVar . TV . T.pack $ names !! n
     where
         names = map ('_' :) $ [1..] >>= flip replicateM ['a'..'z']
 
@@ -68,7 +70,7 @@ inferTopLevel (decl : rest) l =
         DStmt (SRet _) -> throwError "Top-level return statement"
         DStmt _ -> undefined
 
-inferTopLevelFn :: String -> Params -> TypeAnnot -> UntypedExpr -> Infer Type
+inferTopLevelFn :: T.Text -> Params -> TypeAnnot -> UntypedExpr -> Infer Type
 inferTopLevelFn name params tann expr = do
     let (ps, panns) = unzip params
     pts <- traverse (const fresh) params
@@ -102,7 +104,7 @@ inferDecls ((DFunc _ name params tann expr, t) : rest) l typs = do
     local (Map.insert name (scheme, False) . Map.delete name) (inferDecls rest (DFunc et' name params tann expr' : l) typs)
 inferDecls ((DVar _ isMut name tann expr, t) : rest) l typs = do
     env <- ask
-    when (isJust (Map.lookup name env)) (throwError $ "Already defined variable " ++ name)
+    when (isJust (Map.lookup name env)) (throwError $ "Already defined variable " ++ T.unpack name)
     ((expr', et), consts) <- listen (inferExpr expr)
     subst <- liftEither (runSolve consts)
     let et' = apply subst et
@@ -123,7 +125,7 @@ inferDecls ((DOper _ opdef op params tann expr, t) : rest) l typs = do
     when (isJust t) (constrain $ CEqual et' (fromJust t))
     local (Map.insert op (scheme, False) . Map.delete op) (inferDecls rest (DOper et' opdef op params tann expr' : l) typs)
 
-inferFn :: String -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
+inferFn :: T.Text -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
 inferFn name params tann expr = do
     let (ps, panns) = unzip params
     pts <- traverse (const fresh) params
@@ -154,7 +156,7 @@ inferExpr = \case
             EVar _ n -> do
                 isMut <- lookupMut n
                 if isMut then return ()
-                else throwError $ "Cannot assign to immutable variable " ++ n
+                else throwError $ "Cannot assign to immutable variable " ++ T.unpack n
             EDeref _ _ -> return ()
             _ -> throwError "Cannot assign to non-lvalue"
         (b', bt) <- inferExpr b
@@ -256,7 +258,7 @@ inferBranch mt (pat, expr) = do
     (expr', et) <- local (Map.fromList vars' `Map.union`) (inferExpr expr)
     return ((pat, expr'), et)
 
-inferPattern :: Pattern -> Infer (Type, [(String, TypeScheme)])
+inferPattern :: Pattern -> Infer (Type, [(T.Text, TypeScheme)])
 -- inferPattern (PCon name pats) = do
 --     (pts, vars) <- unzip <$> traverse inferPattern pats
 --     undefined
@@ -270,17 +272,17 @@ inferPattern PWild = do
     ptype <- fresh
     return (ptype, [])
 
-lookupVar :: String -> Infer (TypeScheme, Bool)
+lookupVar :: T.Text -> Infer (TypeScheme, Bool)
 lookupVar name = do
     env <- ask
     case Map.lookup name env of
         Just v -> return v
-        Nothing -> throwError ("Unknown variable " ++ name)
+        Nothing -> throwError ("Unknown variable " ++ T.unpack name)
 
-lookupType :: String -> Infer Type
+lookupType :: T.Text -> Infer Type
 lookupType name = lookupVar name >>= instantiate . fst
 
-lookupMut :: String -> Infer Bool
+lookupMut :: T.Text -> Infer Bool
 lookupMut name = snd <$> lookupVar name
 
 filterNothings :: [Maybe a] -> [a]
