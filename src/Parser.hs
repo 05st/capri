@@ -247,4 +247,7 @@ builtinOpers :: [OperatorDef]
 builtinOpers =
     [OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
      OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/",
-     OperatorDef ALeft 2 "==", OperatorDef ALeft 2 "!="]
+     OperatorDef ALeft 3 "==", OperatorDef ALeft 3 "!=",
+     OperatorDef ALeft 4 ">", OperatorDef ALeft 4 "<",
+     OperatorDef ALeft 4 ">=", OperatorDef ALeft 4 "<=",
+     OperatorDef ALeft 1 "||", OperatorDef ALeft 2 "&&"]

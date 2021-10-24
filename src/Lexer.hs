@@ -26,7 +26,7 @@ tokenDef = Token.LanguageDef
          "str", "char", "bool", "unit",
          "true", "false", "()",
          "_"]
-    , Token.reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!="]
+    , Token.reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<="]
     , Token.caseSensitive = True
     }
 

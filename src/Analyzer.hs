@@ -211,8 +211,12 @@ inferExpr = \case
                     (TInt64, TPtr _) -> return ()
                     _ -> constrain (CEqual bt at)
                 return (EBinOp at op a' b', at)
-            _ | op `elem` ["==", "!="] -> do
+            _ | op `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
                 constrain (CEqual bt at)
+                return (EBinOp TBool op a' b', TBool)
+            _ | op `elem` ["||", "&&"] -> do
+                constrain (CEqual at TBool)
+                constrain (CEqual bt TBool)
                 return (EBinOp TBool op a' b', TBool)
             _ -> do
                 opt <- lookupType op

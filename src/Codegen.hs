@@ -121,7 +121,7 @@ genExpr = \case
         tell "))"
     EBinOp _ op l r -> do
         case op of
-            _ | op `elem` ["+", "-", "*", "/", "==", "!="] -> do
+            _ | op `elem` ["+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<=", "||", "&&"] -> do
                 genExpr l
                 tell (fromText op)
                 genExpr r
