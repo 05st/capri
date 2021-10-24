@@ -21,7 +21,16 @@ type Parser a = ParsecT T.Text [OperatorDef] Identity a
 
 -- Declarations
 declaration :: Parser UntypedDecl
-declaration = funcDecl <|> operDecl <|> try varDecl <|> (DStmt <$> statement)
+declaration = externDecl <|> funcDecl <|> operDecl <|> try varDecl <|> (DStmt <$> statement)
+
+externDecl :: Parser UntypedDecl
+externDecl = do
+    reserved "extern"
+    fn <- identifier
+    paramTypes <- parens (sepBy type' comma)
+    retType <- typeAnnot
+    semi
+    return (DExtern fn paramTypes retType)
 
 funcDecl :: Parser UntypedDecl
 funcDecl = do
@@ -146,7 +155,7 @@ ref = do
     ERef () <$> value
 
 value :: Parser UntypedExpr
-value = (try sizeof <|> try cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -197,7 +206,7 @@ typeFunc = do
 
 typeBase :: Parser Type
 typeBase = do
-    t <- typePrim <|> (TCon <$> typeIdentifier) <|> (TVar . TV <$> identifier) <|> parens type'
+    t <- typePrim <|> (TCon <$> typeIdentifier) <|> {-(TVar . TV <$> identifier) <|> -} parens type'
     option t (TPtr t <$ (whitespace *> char '*' <* whitespace))
 
 typePrim :: Parser Type

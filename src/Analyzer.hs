@@ -50,7 +50,9 @@ infer decls =
 
 inferTopLevel :: [UntypedDecl] -> [(UntypedDecl, Maybe Type)] -> Infer [TypedDecl]
 inferTopLevel [] [] = return []
-inferTopLevel [] l = fst <$> inferDecls l [] []
+inferTopLevel [] l = do
+    (decls, _, _) <- inferDecls l [] []
+    return decls
 inferTopLevel (DStmt _ : _) _ = throwError "No top-level statements allowed"
 inferTopLevel (decl : rest) l =
     case decl of
@@ -68,6 +70,8 @@ inferTopLevel (decl : rest) l =
             local (Map.insert name (Forall [] t, isMut)) (inferTopLevel rest ((d, Just t) : l))
         -}
         DStmt (SRet _) -> throwError "Top-level return statement"
+        DExtern n pts rt -> do
+            local (Map.insert n (Forall [] (TFunc pts rt), False)) (inferTopLevel rest l)
         DStmt _ -> undefined
 
 inferTopLevelFn :: T.Text -> Params -> TypeAnnot -> UntypedExpr -> Infer Type
@@ -82,8 +86,10 @@ inferTopLevelFn name params tann expr = do
     return (TFunc pts rt)
 
 -- TODO: clean
-inferDecls :: [(UntypedDecl, Maybe Type)] -> [TypedDecl] -> [Type] -> Infer ([TypedDecl], [Type])
-inferDecls [] l typs = return (l, typs)
+inferDecls :: [(UntypedDecl, Maybe Type)] -> [TypedDecl] -> [Type] -> Infer ([TypedDecl], [Type], TEnv)
+inferDecls [] l typs = do
+    env <- ask
+    return (l, typs, env)
 inferDecls ((DStmt (SRet e), t) : rest) l typs = do
     (e', et) <- inferExpr e
     inferDecls rest (DStmt (SRet e') : l) (et : typs)
@@ -91,9 +97,9 @@ inferDecls ((DStmt s, t) : rest) l typs = do
     dstmt <- DStmt <$> inferStmt s
     inferDecls rest (dstmt : l) typs
 inferDecls ((DFunc _ name params tann expr, t) : rest) l typs = do
-    env <- ask
     ((expr', et), consts) <- listen (inferFn name params tann expr)
     subst <- liftEither (runSolve consts)
+    env <- ask
     let et' = apply subst et
         scheme = generalize env et'
     let (TFunc pts rt) = et'
@@ -107,15 +113,16 @@ inferDecls ((DVar _ isMut name tann expr, t) : rest) l typs = do
     when (isJust (Map.lookup name env)) (throwError $ "Already defined variable " ++ T.unpack name)
     ((expr', et), consts) <- listen (inferExpr expr)
     subst <- liftEither (runSolve consts)
+    env' <- ask
     let et' = apply subst et
-        scheme = generalize env et'
+        scheme = generalize env' et'
     when (isJust tann) (constrain $ CEqual (fromJust tann) et')
     when (isJust t) (constrain $ CEqual et' (fromJust t))
     local (Map.insert name (scheme, isMut) . Map.delete name) (inferDecls rest (DVar et' isMut name tann expr' : l) typs)
 inferDecls ((DOper _ opdef op params tann expr, t) : rest) l typs = do
-    env <- ask
     ((expr', et), consts) <- listen (inferFn op params tann expr)
     subst <- liftEither (runSolve consts)
+    env <- ask
     let et' = apply subst et
         scheme = generalize env et'
     let (TFunc pts rt) = et'
@@ -124,6 +131,7 @@ inferDecls ((DOper _ opdef op params tann expr, t) : rest) l typs = do
     sequence_ [constrain (CEqual pt pann) | (pt, pann) <- zip pts (filterNothings panns)]
     when (isJust t) (constrain $ CEqual et' (fromJust t))
     local (Map.insert op (scheme, False) . Map.delete op) (inferDecls rest (DOper et' opdef op params tann expr' : l) typs)
+inferDecls ((DExtern n _ _, _) : _) _ _ = throwError $ "Local extern " ++ T.unpack n
 
 inferFn :: T.Text -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
 inferFn name params tann expr = do
@@ -163,14 +171,19 @@ inferExpr = \case
         constrain (CEqual at bt)
         return (EAssign at a' b', at)
     EBlock _ decls res -> do
-        (res', rt) <- inferExpr res
-        (decls', ret_types) <- inferDecls (zip decls (repeat Nothing)) [] []
-        case ret_types of
+        case decls of
             [] -> do
-                return (EBlock rt (reverse decls') res', rt)
-            (t : rest) -> do
-                sequence_ [constrain (CEqual t t') | t' <- rest]
-                return (EBlock t (reverse decls') res', t)
+                (res', rt) <- inferExpr res
+                return (res', rt)
+            _ -> do
+                (decls', ret_types, env) <- inferDecls (zip decls (repeat Nothing)) [] []
+                (res', rt) <- local (const env) (inferExpr res)
+                case ret_types of
+                    [] -> do
+                        return (EBlock rt (reverse decls') res', rt)
+                    (t : rest) -> do
+                        sequence_ [constrain (CEqual t t') | t' <- rest]
+                        return (EBlock t (reverse decls') res', t)
     EIf _ c a b -> do
         (c', ct) <- inferExpr c
         (a', at) <- inferExpr a
@@ -220,6 +233,10 @@ inferExpr = \case
     ECall _ a bs -> do
         (a', at) <- inferExpr a
         (bs', bts) <- unzip <$> traverse inferExpr bs
+        case at of
+            TFunc pts _ -> when (length pts /= length bts)
+                (throwError $ "Function requires " ++ show (length pts) ++ " parameters, but " ++ show (length bts) ++ " were passed")
+            _ -> throwError "Attempt to call non-function"
         rt <- fresh
         constrain (CEqual at (TFunc bts rt))
         return (ECall rt a' bs', rt)

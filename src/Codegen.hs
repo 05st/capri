@@ -2,7 +2,6 @@
 {-# Language LambdaCase #-}
 {-# Language TupleSections #-}
 
-
 module Codegen where
 
 import Control.Monad.Writer
@@ -14,6 +13,7 @@ import qualified Data.Text.Lazy.IO as TIO
 import Data.Text.Lazy.Builder
 
 import Syntax
+import Data.List
 
 type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
@@ -59,6 +59,7 @@ tellnl = tell . (<> "\n")
 initGen :: [TypedDecl] -> Gen ()
 initGen decls = do
     tellnl "// Juno"
+    tellnl "#include <stdio.h>"
     tellnl "#include <stdint.h>"
     tellnl "#include <stdbool.h>"
     tellnl "typedef char UNIT;"
@@ -69,11 +70,85 @@ genTopLevelDecls = foldr ((>>) . genDecl) (return ())
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
-    DFunc t name ps tann expr -> do
+    DFunc t name ps _ expr -> do
         let (TFunc pts rt) = t
-        tell $ convertType rt
-        tell $ " " <> fromText name
-        return ()
+        let pnames = map fst ps
+        let params = foldr (<>) "" $ intersperse ", " [convertType pt <> " " <> fromText pname | (pt, pname) <- zip pts pnames]
+        tellnl $ convertType rt <> " " <> fromText name <> "(" <> params <> ") {"
+        tell "return "
+        genExpr expr
+        tellnl ";\n}"
+    DVar t _ name _ expr -> do
+        tell $ convertType t <> " " <> fromText name <> "="
+        genExpr expr
+        tellnl ";"
+    DStmt s -> genStmt s
+    other -> undefined
+
+genStmt :: TypedStmt -> Gen ()
+genStmt = \case
+    SRet e -> tell "return " >> genExpr e >> tellnl ";"
+    SExpr e -> genExpr e >> tellnl ";"
+    SWhile c e -> do
+        tell "while ("
+        genExpr c
+        tell ") "
+        genExpr e
+        tellnl ";"
+
+genExpr :: TypedExpr -> Gen ()
+genExpr = \case
+    ELit _ l -> genLit l
+    EVar _ v -> tell (fromText v)
+    EAssign _ l r -> do
+        genExpr l
+        tell " = "
+        genExpr r
+    EBlock _ decls res -> do
+        tellnl "({"
+        mapM_ genDecl decls
+        genExpr res
+        tell ";\n})"
+    EIf t c a b -> do
+        tell "(("
+        genExpr c
+        tell ") ? ("
+        genExpr a
+        tell ") : ("
+        genExpr b
+        tell "))"
+    EBinOp _ op l r -> do
+        case op of
+            "+" -> do
+                genExpr l
+                tell " + "
+                genExpr r
+            _ -> undefined
+    ECall _ f args -> do
+        genExpr f
+        tell "("
+        sequence_ (intersperse (tell ", ") (map genExpr args))
+        tell ")"
+    ECast _ t e -> do
+        tell $ "(" <> convertType t <> ")"
+        genExpr e
+    EDeref _ e -> do
+        tell "*"
+        genExpr e
+    ERef _ e -> do
+        tell "&"
+        genExpr e
+    ESizeof _ t -> tell $ "sizeof(" <> convertType t <> ")"
+    other -> undefined
+
+genLit :: Lit -> Gen ()
+genLit = \case
+    LInt n -> tell (fromString $ show n)
+    LFloat n -> tell (fromString $ show n)
+    LString s -> tell $ fromString (show (T.unpack s))
+    LChar c -> tell $ "'" <> singleton c <> "'"
+    LBool b -> tell $ if b then "true" else "false"
+    LUnit -> tell "0"
 
 convertType :: Type -> Builder
 convertType = \case
@@ -88,7 +163,9 @@ convertType = \case
     TFloat32 -> "float"
     TFloat64 -> "double"
     TPtr t -> convertType t <> "*"
+    TStr -> "char*"
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "UNIT"
+    TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)

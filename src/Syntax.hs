@@ -15,6 +15,7 @@ data Decl a
     = DFunc a T.Text Params TypeAnnot (Expr a)
     | DOper a OperatorDef T.Text Params TypeAnnot (Expr a)
     | DVar a Bool T.Text TypeAnnot (Expr a)
+    | DExtern T.Text [Type] Type
     | DStmt (Stmt a)
     deriving (Show, Functor)
 
