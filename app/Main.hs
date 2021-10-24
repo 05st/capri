@@ -13,10 +13,11 @@ main :: IO ()
 main = do
     args <- getArgs
     input <- readFile (head args)
+    let output = last args
     case parse (T.pack input) of
         Right decls ->
             case infer decls of
                 Right annotated -> do
-                    generate "/home/sami/testjuno.c" annotated
+                    generate output annotated
                 Left err -> putStrLn err
         Left err -> print err
