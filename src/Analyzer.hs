@@ -204,15 +204,17 @@ inferExpr = \case
         (b', bt) <- inferExpr b
         case op of
             _ | op `elem` ["+", "-", "*", "/"] -> do -- TODO
+            {-
                 case (at, bt) of
                     (TPtr _, TInt32) -> return ()
                     (TPtr _, TInt64) -> return ()
                     (TInt32, TPtr _) -> return ()
                     (TInt64, TPtr _) -> return ()
                     _ -> constrain (CEqual bt at)
+            -}
                 return (EBinOp at op a' b', at)
             _ | op `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
-                constrain (CEqual bt at)
+                --constrain (CEqual bt at)
                 return (EBinOp TBool op a' b', TBool)
             _ | op `elem` ["||", "&&"] -> do
                 constrain (CEqual at TBool)
@@ -309,7 +311,7 @@ inferPattern (PVar name) = do
     ptype <- fresh
     pure (ptype, [(name, Forall [] ptype)])
 inferPattern (PAs name pat) = do
-    undefined
+    throwError "As-patterns not implemented"
 inferPattern (PLit lit) = return (inferLit lit, [])
 inferPattern PWild = do
     ptype <- fresh

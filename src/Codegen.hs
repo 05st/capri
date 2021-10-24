@@ -44,12 +44,12 @@ downIndent = do
 beforeStmt :: Gen String
 beforeStmt = undefined
 
-tmpVar :: Gen String
+tmpVar :: Gen T.Text
 tmpVar = do
     state <- get
     let count = tmpVarCount state
     put (state {tmpVarCount = count + 1})
-    return (names !! count)
+    return (T.pack $ names !! count)
     where
         names = map ('_' :) $ [1..] >>= flip replicateM ['a'..'z']
 
@@ -64,6 +64,7 @@ initGen decls = do
     tellnl "#include <stdint.h>"
     tellnl "#include <stdbool.h>"
     tellnl "#include <math.h>"
+    tellnl "#include <time.h>"
     tellnl "typedef char UNIT;"
     genTopLevelDecls decls
 
@@ -142,6 +143,25 @@ genExpr = \case
         tell "&"
         genExpr e
     ESizeof _ t -> tell $ "sizeof(" <> convertType t <> ")"
+    EMatch t m bs -> do
+        tellnl "({"
+        rvar <- fromText <$> tmpVar
+        mvar <- fromText <$> tmpVar
+        let mvarType = typeOfExpr m
+        tellnl $ convertType t <> " " <> rvar <> ";"
+        tell $ convertType mvarType <> " " <> mvar <> " = "
+        genExpr m
+        tellnl ";"
+        genMatchBranches mvarType rvar mvar (takeWhileOneMore
+            (\(p, _) ->
+                case p of
+                    PWild -> False
+                    PVar _ -> False
+                    _ -> True
+                ) bs)
+        tellnl $ "\n" <> rvar <> ";"
+        tell "})"
+        return ();
     other -> undefined
 
 genLit :: Lit -> Gen ()
@@ -152,6 +172,41 @@ genLit = \case
     LChar c -> tell $ "'" <> singleton c <> "'"
     LBool b -> tell $ if b then "true" else "false"
     LUnit -> tell "0"
+
+genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
+genMatchBranches mvarType rvar mvar [branch] = genMatchBranch mvarType rvar mvar branch
+genMatchBranches mvarType rvar mvar (branch : rest) = do
+    genMatchBranch mvarType rvar mvar branch
+    tell " else "
+    genMatchBranches mvarType rvar mvar rest
+genMatchBranches _ _ _ _= return ()
+
+genMatchBranch :: Type -> Builder -> Builder -> (Pattern, TypedExpr) -> Gen ()
+genMatchBranch _ rvar mvar (PLit l, bexpr) = do
+    tell $ "if (" <> mvar <> " == "
+    genLit l
+    tellnl ") {"
+    tell $ rvar <> " = "
+    genExpr bexpr
+    tellnl ";"
+    tell "}"
+genMatchBranch mvarType rvar mvar (PVar var, bexpr) = do
+    tellnl "{"
+    tellnl $ convertType mvarType <> " " <> fromText var <> " = " <> mvar <> ";"
+    tell $ rvar <> " = "
+    genExpr bexpr
+    tellnl ";"
+    tell "}"
+genMatchBranch _ rvar mvar (PWild, bexpr) = do
+    tellnl "{"
+    tell $ rvar <> " = "
+    genExpr bexpr
+    tellnl ";"
+    tell "}"
+genMatchBranch mvarType rvar mvar (PAs var pat, bexpr) = do
+    tellnl "{"
+    tell "}"
+    throwError "As-patterns for match expressions are yet to be implemented"
 
 convertType :: Type -> Builder
 convertType = \case
@@ -172,3 +227,6 @@ convertType = \case
     TUnit -> "UNIT"
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
+
+takeWhileOneMore :: (a -> Bool) -> [a] -> [a]
+takeWhileOneMore p = foldr (\x ys -> if p x then x:ys else [x]) []
