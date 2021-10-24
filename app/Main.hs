@@ -13,6 +13,7 @@ main = do
     case parse input of
         Right decls ->
             case infer decls of
-                Right annotated -> print annotated
+                Right annotated -> do
+                    generate "/home/sami/testjuno.c" annotated
                 Left err -> putStrLn err
         Left err -> print err

@@ -58,12 +58,13 @@ inferTopLevel (decl : rest) l =
         d@(DOper _ opdef op params tann expr) -> do
             ft <- inferTopLevelFn op params tann expr
             local (Map.insert op (Forall [] ft, False)) (inferTopLevel rest ((d, Just ft) : l))
-        d@(DVar isMut name tann expr) -> do
-            t <- fresh
+        d@(DVar _ isMut name tann expr) -> throwError "Top-level variable declaration"
+        {-    t <- fresh
             case tann of
                 Nothing -> return ()
                 Just ta -> constrain (CEqual ta t)
             local (Map.insert name (Forall [] t, isMut)) (inferTopLevel rest ((d, Just t) : l))
+        -}
         DStmt (SRet _) -> throwError "Top-level return statement"
         DStmt _ -> undefined
 
@@ -99,7 +100,7 @@ inferDecls ((DFunc _ name params tann expr, t) : rest) l typs = do
     sequence_ [constrain (CEqual pt pann) | (pt, pann) <- zip pts (filterNothings panns)]
     when (isJust t) (constrain $ CEqual et' (fromJust t))
     local (Map.insert name (scheme, False) . Map.delete name) (inferDecls rest (DFunc et' name params tann expr' : l) typs)
-inferDecls ((DVar isMut name tann expr, t) : rest) l typs = do
+inferDecls ((DVar _ isMut name tann expr, t) : rest) l typs = do
     env <- ask
     when (isJust (Map.lookup name env)) (throwError $ "Already defined variable " ++ name)
     ((expr', et), consts) <- listen (inferExpr expr)
@@ -108,7 +109,7 @@ inferDecls ((DVar isMut name tann expr, t) : rest) l typs = do
         scheme = generalize env et'
     when (isJust tann) (constrain $ CEqual (fromJust tann) et')
     when (isJust t) (constrain $ CEqual et' (fromJust t))
-    local (Map.insert name (scheme, isMut) . Map.delete name) (inferDecls rest (DVar isMut name tann expr' : l) typs)
+    local (Map.insert name (scheme, isMut) . Map.delete name) (inferDecls rest (DVar et' isMut name tann expr' : l) typs)
 inferDecls ((DOper _ opdef op params tann expr, t) : rest) l typs = do
     env <- ask
     ((expr', et), consts) <- listen (inferFn op params tann expr)

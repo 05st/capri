@@ -11,7 +11,7 @@ type Params = [(String, TypeAnnot)]
 data Decl a
     = DFunc a String Params TypeAnnot (Expr a)
     | DOper a OperatorDef String Params TypeAnnot (Expr a)
-    | DVar Bool String TypeAnnot (Expr a)
+    | DVar a Bool String TypeAnnot (Expr a)
     | DStmt (Stmt a)
     deriving (Show, Functor)
 

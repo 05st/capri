@@ -1,0 +1,18 @@
+module Codegen where
+
+import Control.Monad.State
+import Control.Monad.Except
+
+type Gen a = ExceptT String (StateT GenState)
+data GenState = GenState
+    { filePath :: FilePath }
+
+write :: String -> Gen ()
+write text = do
+    file <- gets filePath
+    appendFile file text
+
+generate :: FilePath -> IO ()
+generate file = do
+    writeFile file "testXD"
+    appendFile file "another"

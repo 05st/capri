@@ -56,7 +56,7 @@ varDecl = do
     name <- identifier
     annot <- optionMaybe typeAnnot
     reservedOp ":="
-    DVar isMut name annot <$> (expression <* semi)
+    DVar () isMut name annot <$> (expression <* semi)
 
 -- Statements
 statement :: Parser UntypedStmt
@@ -143,7 +143,7 @@ ref = do
     ERef () <$> value
 
 value :: Parser UntypedExpr
-value = try (sizeof <|> cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+value = (try sizeof <|> try cast <|> call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -199,7 +199,7 @@ typeBase = do
 
 typePrim :: Parser Type
 typePrim = choice $ map (\s -> TCon s <$ reserved s)
-    ["i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f16", "f32", "f64", "f128", "str", "char", "bool", "unit"]
+    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "str", "char", "bool", "unit"]
 
 -- Parse patterns
 pattern :: Parser Pattern
@@ -229,7 +229,7 @@ params = parens (sepBy ((,) <$> identifier <*> optionMaybe typeAnnot) comma)
 
 -- Run parser
 parse :: String -> Either ParseError [UntypedDecl]
-parse = runParser (many declaration) builtinOpers "juno"
+parse = runParser (many1 declaration) builtinOpers "juno"
 
 builtinOpers :: [OperatorDef]
 builtinOpers = [OperatorDef ALeft 5 "+"]
