@@ -14,8 +14,8 @@ import Text.Parsec.Expr
 
 import Lexer
 import Syntax
+import Type
 import OperatorDef
-import qualified Text.Parsec.Prim as Parsec
 
 type Parser a = ParsecT T.Text [OperatorDef] Identity a
 

@@ -11,9 +11,10 @@ import Control.Monad.Except
 import qualified Data.Text as T
 import qualified Data.Text.Lazy.IO as TIO
 import Data.Text.Lazy.Builder
+import Data.List
 
 import Syntax
-import Data.List
+import Type
 
 type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
@@ -71,9 +72,9 @@ initGen decls = do
 genTopLevelDecls :: [TypedDecl] -> Gen ()
 genTopLevelDecls = foldr ((>>) . genDecl) (return ())
 
-genDecl :: TypedDecl -> Gen ()
-genDecl = \case
-    DFunc t name ps _ expr -> do
+genTopLevel :: TypedTopLvl -> Gen ()
+genTopLevel = \case
+    TLFunc t name ps _ expr -> do
         let (TFunc pts rt) = t
         let pnames = map fst ps
         let params = foldr (<>) "" $ intersperse ", " [convertType pt <> " " <> fromText pname | (pt, pname) <- zip pts pnames]
@@ -81,19 +82,15 @@ genDecl = \case
         tell "return "
         genExpr expr
         tellnl ";\n}"
+    other -> undefined
+
+genDecl :: TypedDecl -> Gen ()
+genDecl = \case
     DVar t _ name _ expr -> do
-        case t of
-            TArr et l -> tell $ convertType et <> " " <> fromText name <> "[" <> (fromString . show $ l) <> "]" <> " = "
-            _ -> tell $ convertType t <> " " <> fromText name <> " = "
-        case expr of
-            EArray _ exprs -> do
-                tell "{"
-                sequence_ (intersperse (tell ", ") (map genExpr exprs))
-                tell "}"
-            _ -> genExpr expr
+        tell $ convertType t <> " " <> fromText name <> " = "
+        genExpr expr
         tellnl ";"
     DStmt s -> genStmt s
-    other -> undefined
 
 genStmt :: TypedStmt -> Gen ()
 genStmt = \case
@@ -184,18 +181,6 @@ genExpr = \case
         tellnl $ "\n" <> rvar <> ";"
         tell "})"
         return ();
-    EArray (TArr t _) exprs -> do
-        tvar <- fromText <$> tmpVar
-        tell $ "({ " <> convertType t <> " " <> tvar <> "[] = {"
-        sequence_ (intersperse (tell ", ") (map genExpr exprs))
-        tell $ "}; " <> tvar <> ";"
-        tell " })"
-    EIndex _ e i -> do
-        genExpr e
-        let et = typeOfExpr e
-        case et of
-            TArr _ l | i >= l || i < 0 -> throwError $ "Index out of bounds (len " ++ show l ++ ", idx " ++ show i ++ ")"
-            _ -> tell $ "[" <> (fromString . show $ i) <> "]"
     other -> undefined
 
 genLit :: Lit -> Gen ()
@@ -238,10 +223,6 @@ genMatchBranch _ rvar mvar (PWild, bexpr) = do
     genExpr bexpr
     tellnl ";"
     tell "}"
-genMatchBranch mvarType rvar mvar (PAs var pat, bexpr) = do
-    tellnl "{"
-    tell "}"
-    throwError "As-patterns for match expressions are yet to be implemented"
 
 convertType :: Type -> Builder
 convertType = \case
@@ -260,7 +241,6 @@ convertType = \case
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "UNIT"
-    TArr t _ -> convertType t <> singleton '*'
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
 

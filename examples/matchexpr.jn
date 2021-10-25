@@ -1,6 +1,0 @@
-extern printf(str, i32): unit;
-
-fn main() => {
-    x := [[1, 2], [2, 3]];
-    printf("%d\n", (x[1])[0]);
-};
