@@ -82,7 +82,9 @@ genDecl = \case
         genExpr expr
         tellnl ";\n}"
     DVar t _ name _ expr -> do
-        tell $ convertType t <> " " <> fromText name <> "="
+        case t of
+            TArr et l -> tell $ convertType et <> " " <> fromText name <> "[" <> (fromString . show $ l) <> "]" <> " = "
+            _ -> tell $ convertType t <> " " <> fromText name <> " = "
         genExpr expr
         tellnl ";"
     DStmt s -> genStmt s
@@ -142,7 +144,13 @@ genExpr = \case
     ERef _ e -> do
         tell "&"
         genExpr e
-    ESizeof _ t -> tell $ "sizeof(" <> convertType t <> ")"
+    ESizeof _ arg -> do
+        case arg of
+            Left t -> tell $ "sizeof(" <> convertType t <> ")"
+            Right e -> do
+                tell "sizeof("
+                genExpr e
+                tell ")"
     EMatch t m bs -> do
         tellnl "({"
         rvar <- fromText <$> tmpVar
@@ -152,16 +160,35 @@ genExpr = \case
         tell $ convertType mvarType <> " " <> mvar <> " = "
         genExpr m
         tellnl ";"
-        genMatchBranches mvarType rvar mvar (takeWhileOneMore
-            (\(p, _) ->
-                case p of
-                    PWild -> False
-                    PVar _ -> False
-                    _ -> True
-                ) bs)
+        let branches = takeWhileOneMore
+                (\case
+                    (PWild, _) -> False
+                    (PVar _, _) -> False
+                    _ -> True) bs
+        let isExhaustive = any
+                (\case
+                    (PWild, _) -> True
+                    (PVar _, _) -> True
+                    _ -> False) branches
+        genMatchBranches mvarType rvar mvar branches
+        unless isExhaustive (do
+            tellnl " else {"
+            tellnl "printf(\"PANIC: Non-exhaustive match expression\\n\");"
+            tellnl "exit(-1);"
+            tell "}")
         tellnl $ "\n" <> rvar <> ";"
         tell "})"
         return ();
+    EArray _ exprs -> do
+        tell "{"
+        sequence_ (intersperse (tell ", ") (map genExpr exprs))
+        tell "}"
+    EIndex _ e i -> do
+        genExpr e
+        let et = typeOfExpr e
+        case et of
+            TArr _ l | i >= l || i < 0 -> throwError $ "Index out of bounds (len " ++ show l ++ ", idx " ++ show i ++ ")"
+            _ -> tell $ "[" <> (fromString . show $ i) <> "]"
     other -> undefined
 
 genLit :: Lit -> Gen ()
@@ -174,7 +201,8 @@ genLit = \case
     LUnit -> tell "0"
 
 genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
-genMatchBranches mvarType rvar mvar [branch] = genMatchBranch mvarType rvar mvar branch
+genMatchBranches mvarType rvar mvar [branch] = do
+    genMatchBranch mvarType rvar mvar branch
 genMatchBranches mvarType rvar mvar (branch : rest) = do
     genMatchBranch mvarType rvar mvar branch
     tell " else "
@@ -220,11 +248,12 @@ convertType = \case
     TUInt64 -> "uint64_t"
     TFloat32 -> "float"
     TFloat64 -> "double"
-    TPtr t -> convertType t <> "*"
+    TPtr t -> convertType t <> singleton '*'
     TStr -> "char*"
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "UNIT"
+    TArr t _ -> convertType t <> singleton '*'
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
 

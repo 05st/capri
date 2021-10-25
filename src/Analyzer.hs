@@ -283,8 +283,27 @@ inferExpr = \case
         case e' of
             EVar _ s -> return (ERef (TPtr et) e', TPtr et)
             _ -> throwError "Cannot reference non-variable"
-    ESizeof _ t -> do
-        return (ESizeof TInt32 t, TInt32)
+    ESizeof _ arg -> do
+        arg <-
+            case arg of
+                Left t -> return (Left t)
+                Right e -> Right . fst <$> inferExpr e
+        return (ESizeof TInt32 arg, TInt32)
+    EArray _ exprs -> do
+        (exprs', ets) <- unzip <$> traverse inferExpr exprs
+        case ets of
+            [] -> do
+                tv <- fresh
+                return (EArray tv [], tv)
+            (t : ts) -> do
+                sequence_ [constrain (CEqual t t') | t' <- ts]
+                let typ = TArr t (toInteger $ length ets)
+                return (EArray typ exprs', typ)
+    EIndex _ e idx -> do
+        (e', et) <- inferExpr e
+        tv <- fresh
+        constrain (CEqual et (TArr tv (-1)))
+        return (EIndex tv e' idx, tv)
 
 inferLit :: Lit -> Type
 inferLit = \case
@@ -350,6 +369,10 @@ unify a@(TCon c1) b@(TCon c2)
     | otherwise = return Map.empty
 unify a@(TFunc pts rt) b@(TFunc pts2 rt2) = unifyMany (rt : pts) (rt2 : pts2)
 unify a@(TPtr t) b@(TPtr t2) = unify t t2
+unify a@(TArr t l) b@(TArr t2 l2)
+    | l == -1 || l2 == -1 = unify t t2
+    | l /= l2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
+    | otherwise = unify t t2
 unify a b = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
 unifyMany :: [Type] -> [Type] -> Solve Substitution

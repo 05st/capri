@@ -1,6 +1,9 @@
-fn main() =>
-    match 12 {
-        2 -> 3,
-        3 -> 4,
-        v -> v
-    };
+extern printf(str, i32): unit;
+
+fn test(a) => 2;
+
+fn main() => {
+    x := [124, 23, 42, 213, 52];
+    test(x);
+    printf("%d", *(i32*(x) + 0))
+};

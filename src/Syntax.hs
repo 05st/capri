@@ -39,7 +39,9 @@ data Expr a
     | ECast a Type (Expr a)
     | EDeref a (Expr a)
     | ERef a (Expr a)
-    | ESizeof a Type
+    | ESizeof a (Either Type (Expr a))
+    | EArray a [Expr a]
+    | EIndex a (Expr a) Integer
     deriving (Show, Functor)
 
 data Lit
@@ -57,6 +59,7 @@ data Type
     | TFunc [Type] Type
     | TVar TVar
     | TPtr Type
+    | TArr Type Integer
     deriving (Show, Eq)
 
 data Constraint = CEqual Type Type | CClass Type [T.Text] deriving (Show)
@@ -85,6 +88,8 @@ typeOfExpr = \case
     EDeref t _ -> t
     ERef t _ -> t
     ESizeof t _ -> t
+    EArray t _ -> t
+    EIndex t _ _ -> t
 
 type UntypedDecl = Decl ()
 type TypedDecl = Decl Type

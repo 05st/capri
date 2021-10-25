@@ -16,10 +16,12 @@ instance Substitutable Type where
     tvs (TVar tv) = Set.singleton tv
     tvs (TFunc a b) = tvs a `Set.union` tvs b
     tvs (TPtr t) = tvs t
+    tvs (TArr t _) = tvs t
     apply s t@(TVar tv) = Map.findWithDefault t tv s
     apply s (TFunc a b) = TFunc (apply s a) (apply s b)
     apply s t@(TCon _) = t
     apply s (TPtr t) = TPtr (apply s t)
+    apply s (TArr t l) = TArr (apply s t) l
 
 instance Substitutable TypeScheme where
     tvs (Forall vs t) = tvs t `Set.difference` Set.fromList vs

@@ -108,7 +108,7 @@ expression = do
         toAssoc _ = undefined
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> closure <|> try assign <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> try array <|> closure <|> try assign <|> try index <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -138,11 +138,19 @@ closure = do
     reservedOp "=>"
     EClosure () closedVars paramsParsed retAnnot <$> expression
 
+array :: Parser UntypedExpr
+array = EArray () <$> brackets (sepBy expression comma)
+
 assign :: Parser UntypedExpr
 assign = do
     var <- deref <|> value
     reservedOp "="
     EAssign () var <$> expression
+
+index :: Parser UntypedExpr
+index = do
+    e <- value
+    EIndex () e <$> brackets intLit
 
 deref :: Parser UntypedExpr
 deref = do
@@ -160,7 +168,8 @@ value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal <* white
 sizeof :: Parser UntypedExpr 
 sizeof = do
     reserved "sizeof"
-    ESizeof () <$> type'
+    arg <- try (Left <$> type') <|> (Right <$> expression)
+    return (ESizeof () arg)
 
 cast :: Parser UntypedExpr
 cast = do
