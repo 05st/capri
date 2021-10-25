@@ -168,6 +168,12 @@ inferExpr = \case
                 if isMut then return ()
                 else throwError $ "Cannot assign to immutable variable " ++ T.unpack n
             EDeref _ _ -> return ()
+            EIndex _ e _ -> do
+                case e of
+                    EVar _ t -> do
+                        isMut <- lookupMut t
+                        unless isMut (throwError $ "Cannot assign to immutable variable " ++ T.unpack t)
+                    _ -> return ()
             _ -> throwError "Cannot assign to non-lvalue"
         (b', bt) <- inferExpr b
         constrain (CEqual at bt)
@@ -302,7 +308,6 @@ inferExpr = \case
     EIndex _ e idx -> do
         (e', et) <- inferExpr e
         tv <- fresh
-        constrain (CEqual et (TArr tv (-1)))
         return (EIndex tv e' idx, tv)
 
 inferLit :: Lit -> Type

@@ -143,7 +143,7 @@ array = EArray () <$> brackets (sepBy expression comma)
 
 assign :: Parser UntypedExpr
 assign = do
-    var <- deref <|> value
+    var <- deref <|> try index <|> value 
     reservedOp "="
     EAssign () var <$> expression
 

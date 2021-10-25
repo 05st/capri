@@ -1,9 +1,10 @@
 extern printf(str, i32): unit;
 
-fn test(a) => 2;
+fn test(a) => a[3];
 
 fn main() => {
-    x := [124, 23, 42, 213, 52];
-    test(x);
-    printf("%d", *(i32*(x) + 0))
+    mut x := [124, 23, 42, 213, 52];
+    x[3] = 2;
+    printf("%d\n", ([1, 2, 3])[2] = 3);
+    printf("%d\n", test([1, 2, 3, 4]));
 };

@@ -85,7 +85,12 @@ genDecl = \case
         case t of
             TArr et l -> tell $ convertType et <> " " <> fromText name <> "[" <> (fromString . show $ l) <> "]" <> " = "
             _ -> tell $ convertType t <> " " <> fromText name <> " = "
-        genExpr expr
+        case expr of
+            EArray _ exprs -> do
+                tell "{"
+                sequence_ (intersperse (tell ", ") (map genExpr exprs))
+                tell "}"
+            _ -> genExpr expr
         tellnl ";"
     DStmt s -> genStmt s
     other -> undefined
@@ -179,10 +184,12 @@ genExpr = \case
         tellnl $ "\n" <> rvar <> ";"
         tell "})"
         return ();
-    EArray _ exprs -> do
-        tell "{"
+    EArray (TArr t _) exprs -> do
+        tvar <- fromText <$> tmpVar
+        tell $ "({ " <> convertType t <> " " <> tvar <> "[] = {"
         sequence_ (intersperse (tell ", ") (map genExpr exprs))
-        tell "}"
+        tell $ "}; " <> tvar <> ";"
+        tell " })"
     EIndex _ e i -> do
         genExpr e
         let et = typeOfExpr e
