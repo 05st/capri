@@ -16,6 +16,20 @@ import OperatorDef
 
 type Parser = ParsecT Void Text (S.State [OperatorDef])
 
+reservedNames :: [Text]
+reservedNames =
+    ["fn", "mut", "if", "else", "match", "while", "op", "sizeof", "return", "extern",
+     "infixl", "infixr", "infix", "prefix", "postfix",
+     "i8", "i16", "i32", "i64",
+     "u8", "u16", "u32", "u64",
+     "f32", "f64",
+     "str", "char", "bool", "unit",
+     "true", "false", "()",
+     "_"]
+
+reservedOpNames :: [Text]
+reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<="]
+
 sc :: Parser ()
 sc = L.space space1 (L.skipLineComment "//") (L.skipBlockComment "/*" "*/")
 
@@ -38,13 +52,13 @@ signedInteger :: Parser Integer
 signedInteger = L.signed sc decimal
 
 octal :: Parser Integer
-octal = lexeme L.octal
+octal = lexeme (char '0' *> char 'o' *> L.octal)
 
 hexadecimal :: Parser Integer
-hexadecimal = lexeme L.hexadecimal
+hexadecimal = lexeme (char '0' *> char 'x' *> L.hexadecimal)
 
 binary :: Parser Integer
-binary = lexeme L.binary
+binary = lexeme (char '0' *> char 'b' *> L.binary)
 
 float :: Parser Double
 float = lexeme L.float
@@ -53,13 +67,19 @@ signedFloat :: Parser Double
 signedFloat = L.signed sc float
 
 identChar :: Parser Char
-identChar = alphaNumChar <|> oneOf ("_'" :: [Char])
+identChar = alphaNumChar-- <|> oneOf ("_'" :: [Char])
 
 identifier :: Parser Text
-identifier = lexeme (mappend <$> (singleton <$> letterChar) <*> (pack <$> many identChar))
+identifier = (lexeme . try) (p >>= check)
+  where
+    p = mappend <$> (singleton <$> letterChar) <*> (pack <$> many identChar)
+    check x =
+        if x `elem` reservedNames
+            then fail $ "keyword " ++ show x ++ " cannot be an identifier"
+            else return x
 
-reserved :: Text -> Parser Text
-reserved kw = lexeme (string kw <* notFollowedBy identChar)
+reserved :: Text -> Parser ()
+reserved kw = lexeme (string kw *> notFollowedBy identChar)
 
 typeIdentifier :: Parser Text
 typeIdentifier = lexeme (mappend <$> (singleton <$> upperChar) <*> (pack <$> many identChar))
@@ -68,22 +88,28 @@ operChar :: Parser Char
 operChar = oneOf (":!@#$%^&*-+=<>./?\\|~" :: [Char])
 
 operator :: Parser Text
-operator = lexeme (pack <$> many operChar)
+operator = lexeme (p >>= check)
+  where
+    p = pack <$> many operChar
+    check x =
+        if x `elem` reservedOpNames
+            then fail $ "operator " ++ show x ++ " is reserved"
+            else return x
 
 reservedOp :: Text -> Parser Text
-reservedOp op = lexeme (string op <* notFollowedBy operChar)
+reservedOp op = (lexeme . try) (string op <* notFollowedBy operChar)
 
 parens :: Parser a -> Parser a
-parens = between (char '(') (char ')') . lexeme
+parens = between (lexeme $ char '(') (lexeme $ char ')')
 
 braces :: Parser a -> Parser a
-braces = between (char '{') (char '}')
+braces = between (lexeme $ char '{') (lexeme $ char '}')
 
 angles :: Parser a -> Parser a
-angles = between (char '<') (char '>')
+angles = between (lexeme $ char '<') (lexeme $ char '>')
 
 brackets :: Parser a -> Parser a
-brackets = between (char '[') (char ']') 
+brackets = between (lexeme $ char '[') (lexeme $ char ']') 
 
 semi :: Parser Char
 semi = lexeme (char ';')
@@ -96,16 +122,3 @@ comma = lexeme (char ',')
 
 dot :: Parser Char
 dot = lexeme (char '.')
-
-{-
-reservedNames =
-    ["fn", "mut", "if", "else", "match", "while", "op", "sizeof", "return", "extern",
-     "infixl", "infixr", "infix", "prefix", "postfix",
-     "i8", "i16", "i32", "i64",
-     "u8", "u16", "u32", "u64",
-     "f32", "f64",
-     "str", "char", "bool", "unit",
-     "true", "false", "()",
-     "_"]
-reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<="]
--}

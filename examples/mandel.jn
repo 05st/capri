@@ -2,7 +2,7 @@ extern putchar(i32): unit;
 extern printf(str, i32): unit;
 extern clock(): i32;
 
-fn pdensity(d: i32) =>
+fn pdensity(d: i32)
     if d > 8
         putchar(32)
     else if d > 4
@@ -12,7 +12,7 @@ fn pdensity(d: i32) =>
     else
         putchar(42);
 
-fn converge(cr, ci) => {
+fn converge(cr, ci) {
     mut r := 0.0;
     mut i := 0.0;
     mut r2 := 0.0;
@@ -28,7 +28,7 @@ fn converge(cr, ci) => {
     return iters;
 };
 
-fn plotHelper(xmin, xmax, xstep, ymin, ymax, ystep) => {
+fn plotHelper(xmin, xmax, xstep, ymin, ymax, ystep) {
     mut y := ymin;
     while y < ymax {
         mut x := xmin;
@@ -41,7 +41,7 @@ fn plotHelper(xmin, xmax, xstep, ymin, ymax, ystep) => {
     };
 };
 
-fn main() => {
+fn main() {
     rs := 0.0-2.5;
     is := 0.0-1.3;
     rm := 0.05;

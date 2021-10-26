@@ -12,12 +12,13 @@ import Codegen
 main :: IO ()
 main = do
     args <- getArgs
-    input <- readFile (head args)
+    let filePath = head args
+    input <- readFile filePath
     let output = last args
-    case parse (T.pack input) of
-        Right decls ->
-            case infer decls of
+    case parse filePath (T.pack input) of
+        Right decls -> print decls
+            {-case infer decls of
                 Right annotated -> do
                     generate output annotated
-                Left err -> putStrLn err
-        Left err -> print err
+                Left err -> putStrLn err-}
+        Left err -> putStrLn err

@@ -23,7 +23,7 @@ import OperatorDef
 
 -- Module
 parseModule :: Parser UntypedModule
-parseModule = many topLvlDecl
+parseModule = sc *> many topLvlDecl <* sc
 
 -- Top Level Declarations
 topLvlDecl :: Parser UntypedTopLvl
@@ -75,7 +75,7 @@ varDecl :: Parser UntypedDecl
 varDecl = do
     isMut <- option False (True <$ reserved "mut")
     name <- identifier
-    annot <- optional typeAnnot
+    annot <- optional (try typeAnnot)
     reservedOp ":="
     DVar () isMut name annot <$> (expression <* semi)
 
@@ -92,7 +92,9 @@ whileStmt :: Parser UntypedStmt
 whileStmt = do
     reserved "while"
     cond <- expression
-    SWhile cond <$> (expression <* semi)
+    body <- expression
+    semi
+    return (SWhile cond body)
 
 -- Expressions
 expression :: Parser UntypedExpr
@@ -161,7 +163,7 @@ ref = do
     ERef () <$> value
 
 value :: Parser UntypedExpr
-value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal) <|> try variable <|> block <|> parens expression
+value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal) <|> try variable <|> try block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -186,19 +188,19 @@ variable = EVar () <$> (identifier <|> parens operator)
 
 block :: Parser UntypedExpr
 block = braces $ do
-    decls <- many (try declaration)
+    decls <- many declaration
     result <- option (ELit () LUnit) expression
     return $ EBlock () decls result
 
 -- Literals
 literal :: Parser Lit
-literal = try (LFloat <$> signedFloat) <|> (LInt <$> integer) 
+literal = try (LFloat <$> signedFloat) <|> (LInt <$> integer)
     <|> (LChar <$> charLiteral) <|> (LString . pack <$> stringLiteral)
     <|> (LBool True <$ reserved "true") <|> (LBool False <$ reserved "false")
     <|> (LUnit <$ reserved "()")
 
 integer :: Parser Integer
-integer = octal <|> hexadecimal <|> binary <|> signedInteger
+integer = try octal <|> try binary <|> try hexadecimal <|> signedInteger
 
 -- Parse types
 type' :: Parser Type
@@ -234,14 +236,17 @@ patternLit = PLit <$> literal
 
 -- Other
 typeAnnot :: Parser Type
-typeAnnot = reservedOp ":" *> type'
+typeAnnot = symbol ":" *> type'
 
 params :: Parser [(Text, Maybe Type)]
 params = parens (sepBy ((,) <$> identifier <*> optional typeAnnot) comma)
 
 -- Run parser
-parse :: Text -> Either (ParseErrorBundle Text Void) UntypedModule
-parse input = fst $ S.runState (runParserT parseModule "juno" input) []
+parse :: String -> Text -> Either String UntypedModule
+parse fileName input =
+    case fst $ S.runState (runParserT parseModule fileName input) builtinOpers of
+        Left err -> Left (errorBundlePretty err)
+        Right mod -> Right mod
 
 builtinOpers :: [OperatorDef]
 builtinOpers =

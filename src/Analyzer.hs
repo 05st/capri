@@ -2,7 +2,7 @@
 {-# Language LambdaCase #-}
 {-# Language TupleSections #-}
 
-module Analyzer (infer) where
+module Analyzer where
 
 import qualified Data.Text as T
 import Data.Maybe
@@ -16,6 +16,8 @@ import Debug.Trace
 
 import Syntax
 import Substitution
+
+{-
 
 type TEnv = Map.Map T.Text (TypeScheme, Bool)
 type Infer = RWST TEnv [Constraint] Int (Except String)
@@ -405,3 +407,5 @@ solve s c =
 
 runSolve :: [Constraint] -> Either String Substitution
 runSolve cs = runIdentity $ runExceptT $ solve Map.empty cs
+
+-}
