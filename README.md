@@ -7,7 +7,7 @@ Takes inspiration from languages such as Rust or Haskell.
 ## Example
 ```
 extern printf(str, i32): unit;
-extern scanf(str, int*): unit;
+extern scanf(str, i32*): unit;
 
 fn factorial(n)
   if n <= 1
