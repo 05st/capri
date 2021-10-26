@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language: Juno
 " Maintainer: 05st
-" Latest Revision: 24 October 2021
+" Latest Revision: 25 October 2021
 
 if exists("b:current_syntax")
     finish
@@ -11,7 +11,7 @@ endif
 syn keyword Keyword import extern infixl infixr infix prefix postfix
 
 " Keywords
-syn keyword Keyword fn op data class impl return sizeof
+syn keyword Keyword fn op return sizeof
 syn keyword StorageClass mut
 
 " Conditionals
@@ -29,11 +29,20 @@ syn keyword Boolean true false
 " Identifiers
 syn match Ignore "[a-zA-Z][a-zA-Z0-9_']*"
 
+" Operators
+syn match Keyword "[!#$^&*\-+=<>./?\\|~]\+"
+syn match Keyword ":="
+
 " Integers
-syn match Number '[-ox]\?\d\+'
+syn match Number "\<[0-9][0-9]*"
+syn match Number "\<0x[a-fA-F0-9]\+"
+syn match Number "\<0o[0-7]\+"
+syn match Number "\<0b[01]\+"
 
 " Floats
-syn match Float '[-]\?\d\+\.\d*'
+syn match Float "\<[0-9]\+\.[0-9]*"
+syn match Float "\<[0-9]\+[eE][-]\?[0-9]\+"
+syn match Float "\<[0-9]\+\.[0-9]*[eE][-]\?[0-9]\+"
 
 " Strings
 syn match SpecialChar contained "\\."
@@ -42,10 +51,6 @@ syn region String start='"' end='"' contains=SpecialChar
 " Characters
 syn match Character "'.'"
 syn match Special "'\\.'"
-
-" Operators
-syn match Keyword "[!#$^&*\-+=<>./?\\|~]\+"
-syn match Keyword ":="
 
 " Semicolons
 syn match Ignore ";"

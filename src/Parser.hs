@@ -51,7 +51,7 @@ topLvlOperDecl = do
     semi
 
     let opdef = OperatorDef assocParsed precedence oper
-    --modifyState (opdef :)
+    S.modify (opdef :)
 
     return $ TLOper () opdef oper paramsParsed retAnnot expr
     where
