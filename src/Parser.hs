@@ -4,69 +4,78 @@
 
 module Parser (Parser.parse) where
 
+import Data.Text (Text, pack)
+import Data.Void
 import Data.List
 import Data.Function
 import Data.Functor.Identity
-import qualified Data.Text as T
 
-import Text.Parsec
-import Text.Parsec.Expr
+import Text.Megaparsec
+import Text.Megaparsec.Char
+
+import Control.Monad.Combinators.Expr
+import qualified Control.Monad.State as S
 
 import Lexer
 import Syntax
 import Type
 import OperatorDef
 
-type Parser a = ParsecT T.Text [OperatorDef] Identity a
+-- Module
+parseModule :: Parser UntypedModule
+parseModule = many topLvlDecl
 
--- Declarations
-declaration :: Parser UntypedDecl
-declaration = externDecl <|> funcDecl <|> operDecl <|> try varDecl <|> (DStmt <$> statement)
+-- Top Level Declarations
+topLvlDecl :: Parser UntypedTopLvl
+topLvlDecl = topLvlFuncDecl <|> topLvlOperDecl <|> topLvlExternDecl
 
-externDecl :: Parser UntypedDecl
-externDecl = do
+topLvlFuncDecl :: Parser UntypedTopLvl
+topLvlFuncDecl = do
+    reserved "fn"
+    name <- identifier
+    paramsParsed <- params
+    retAnnot <- optional typeAnnot
+    expr <- expression
+    semi
+    return $ TLFunc () name paramsParsed retAnnot expr
+
+topLvlOperDecl :: Parser UntypedTopLvl
+topLvlOperDecl = do
+    reserved "op"
+    assocParsed <- assoc
+    precedence <- decimal
+    oper <- operator
+    paramsParsed <- params
+    retAnnot <- optional typeAnnot
+    expr <- expression
+    semi
+
+    let opdef = OperatorDef assocParsed precedence oper
+    --modifyState (opdef :)
+
+    return $ TLOper () opdef oper paramsParsed retAnnot expr
+    where
+        assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
+            <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
+
+topLvlExternDecl :: Parser UntypedTopLvl
+topLvlExternDecl = do
     reserved "extern"
     fn <- identifier
     paramTypes <- parens (sepBy type' comma)
     retType <- typeAnnot
     semi
-    return (DExtern fn paramTypes retType)
+    return (TLExtern fn paramTypes retType)
 
-funcDecl :: Parser UntypedDecl
-funcDecl = do
-    reserved "fn"
-    name <- identifier
-    paramsParsed <- params
-    retAnnot <- optionMaybe typeAnnot
-    reservedOp "=>"
-    expr <- expression
-    semi
-    return $ DFunc () name paramsParsed retAnnot expr
-
-operDecl :: Parser UntypedDecl
-operDecl = do
-    reserved "op"
-    assocParsed <- assoc
-    precedence <- decimal
-    whitespace
-    oper <- operator
-    paramsParsed <- params
-    retAnnot <- optionMaybe typeAnnot
-    reservedOp "=>"
-    expr <- expression
-    semi
-    let opdef = OperatorDef assocParsed precedence oper
-    modifyState (opdef :)
-    return $ DOper () opdef oper paramsParsed retAnnot expr
-    where
-        assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
-            <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
+-- Declarations
+declaration :: Parser UntypedDecl
+declaration = try varDecl <|> (DStmt <$> statement)
 
 varDecl :: Parser UntypedDecl
 varDecl = do
     isMut <- option False (True <$ reserved "mut")
     name <- identifier
-    annot <- optionMaybe typeAnnot
+    annot <- optional typeAnnot
     reservedOp ":="
     DVar () isMut name annot <$> (expression <* semi)
 
@@ -88,27 +97,25 @@ whileStmt = do
 -- Expressions
 expression :: Parser UntypedExpr
 expression = do
-    opers <- getState 
+    opers <- S.get
     let table = mkTable opers
-    buildExpressionParser table term
+    makeExprParser term table
     where
         mkTable = map (map toParser) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
         toParser (OperatorDef assoc _ oper) = case assoc of
-            ALeft -> infixOp oper (EBinOp () oper) (toAssoc assoc)
-            ARight -> infixOp oper (EBinOp () oper) (toAssoc assoc)
-            ANone -> infixOp oper (EBinOp () oper) (toAssoc assoc)
+            ANone -> infixOp oper (EBinOp () oper)
+            ALeft -> infixlOp oper (EBinOp () oper)
+            ARight -> infixrOp oper (EBinOp () oper)
             APrefix -> prefixOp oper (EUnaOp () oper)
             APostfix -> postfixOp oper (EUnaOp () oper)
-        infixOp name f = Infix (reservedOp (T.unpack name) >> return f)
-        prefixOp name f = Prefix (reservedOp (T.unpack name) >> return f)
-        postfixOp name f = Postfix (reservedOp (T.unpack name) >> return f)
-        toAssoc ALeft = AssocLeft
-        toAssoc ARight = AssocRight
-        toAssoc ANone = AssocNone
-        toAssoc _ = undefined
+        infixOp name f = InfixN (reservedOp name >> return f)
+        infixlOp name f = InfixL (reservedOp name >> return f)
+        infixrOp name f = InfixR (reservedOp name >> return f)
+        prefixOp name f = Prefix (reservedOp name >> return f)
+        postfixOp name f = Postfix (reservedOp name >> return f)
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> try array <|> closure <|> try assign <|> try index <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> closure <|> try assign <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -126,7 +133,6 @@ matchExpr = do
     where
         matchBranch = do
             pat <- pattern
-            whitespace
             reservedOp "->"
             (pat,) <$> expression
 
@@ -134,36 +140,28 @@ closure :: Parser UntypedExpr
 closure = do
     closedVars <- brackets (sepBy identifier comma)
     paramsParsed <- params
-    retAnnot <- optionMaybe typeAnnot
+    retAnnot <- optional typeAnnot
     reservedOp "=>"
     EClosure () closedVars paramsParsed retAnnot <$> expression
 
-array :: Parser UntypedExpr
-array = EArray () <$> brackets (sepBy expression comma)
-
 assign :: Parser UntypedExpr
 assign = do
-    var <- deref <|> try index <|> value 
+    var <- deref <|> value 
     reservedOp "="
     EAssign () var <$> expression
 
-index :: Parser UntypedExpr
-index = do
-    e <- value
-    EIndex () e <$> brackets intLit
-
 deref :: Parser UntypedExpr
 deref = do
-    whitespace *> char '*' <* whitespace
+    symbol "*"
     EDeref () <$> value
 
 ref :: Parser UntypedExpr
 ref = do
-    whitespace *> char '&' <* whitespace
+    symbol "&"
     ERef () <$> value
 
 value :: Parser UntypedExpr
-value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal <* whitespace) <|> try variable <|> block <|> parens expression
+value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal) <|> try variable <|> block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -190,18 +188,17 @@ block :: Parser UntypedExpr
 block = braces $ do
     decls <- many (try declaration)
     result <- option (ELit () LUnit) expression
-    whitespace
     return $ EBlock () decls result
 
 -- Literals
 literal :: Parser Lit
-literal = try (LFloat <$> float) <|> (LInt <$> integer) 
-    <|> (LChar <$> charLiteral) <|> (LString <$> stringLiteral)
+literal = try (LFloat <$> signedFloat) <|> (LInt <$> integer) 
+    <|> (LChar <$> charLiteral) <|> (LString . pack <$> stringLiteral)
     <|> (LBool True <$ reserved "true") <|> (LBool False <$ reserved "false")
     <|> (LUnit <$ reserved "()")
 
 integer :: Parser Integer
-integer = intLit <|> try octal <|> try hexadecimal
+integer = octal <|> hexadecimal <|> binary <|> signedInteger
 
 -- Parse types
 type' :: Parser Type
@@ -215,28 +212,22 @@ typeFunc = do
 
 typeBase :: Parser Type
 typeBase = do
-    t <- typePrim <|> (TCon <$> typeIdentifier) <|> {-(TVar . TV <$> identifier) <|> -} parens type'
-    option t (TPtr t <$ (whitespace *> char '*' <* whitespace))
+    t <- typePrim <|> (TCon <$> typeIdentifier) <|> parens type'
+    option t (TPtr t <$ symbol "*")
 
 typePrim :: Parser Type
-typePrim = choice $ map (\s -> TCon s <$ reserved (T.unpack s))
+typePrim = choice $ map (\s -> TCon s <$ reserved s)
     ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "str", "char", "bool", "unit"]
 
 -- Parse patterns
 pattern :: Parser Pattern
-pattern = parens pattern <|> patternWild <|> try patternAs <|> patternVar <|> patternLit
+pattern = parens pattern <|> patternWild <|> patternVar <|> patternLit
 
 patternWild :: Parser Pattern
 patternWild = PWild <$ reserved "_"
 
 patternVar :: Parser Pattern
 patternVar = PVar <$> identifier
-
-patternAs :: Parser Pattern
-patternAs = do
-    var <- identifier
-    reservedOp "@"
-    PAs var <$> pattern
 
 patternLit :: Parser Pattern
 patternLit = PLit <$> literal
@@ -245,12 +236,12 @@ patternLit = PLit <$> literal
 typeAnnot :: Parser Type
 typeAnnot = reservedOp ":" *> type'
 
-params :: Parser [(T.Text, Maybe Type)]
-params = parens (sepBy ((,) <$> identifier <*> optionMaybe typeAnnot) comma)
+params :: Parser [(Text, Maybe Type)]
+params = parens (sepBy ((,) <$> identifier <*> optional typeAnnot) comma)
 
 -- Run parser
-parse :: T.Text -> Either ParseError [UntypedDecl]
-parse = runParser (many1 declaration) builtinOpers "juno"
+parse :: Text -> Either (ParseErrorBundle Text Void) UntypedModule
+parse input = fst $ S.runState (runParserT parseModule "juno" input) []
 
 builtinOpers :: [OperatorDef]
 builtinOpers =

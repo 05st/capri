@@ -1,6 +1,6 @@
 module OperatorDef where
 
-import qualified Data.Text as T
+import Data.Text (Text)
 
 data Assoc
     = ALeft
@@ -13,5 +13,5 @@ data Assoc
 data OperatorDef = OperatorDef
     { assoc :: Assoc
     , prec :: Integer
-    , oper :: T.Text 
+    , oper :: Text 
     } deriving (Show)

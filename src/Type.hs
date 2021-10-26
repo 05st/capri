@@ -4,11 +4,11 @@
 
 module Type where
 
-import qualified Data.Text as T
+import Data.Text (Text)
 
-newtype TVar = TV T.Text deriving (Show, Eq, Ord)
+newtype TVar = TV Text deriving (Show, Eq, Ord)
 data Type
-    = TCon T.Text
+    = TCon Text
     | TFunc [Type] Type
     | TVar TVar
     | TPtr Type

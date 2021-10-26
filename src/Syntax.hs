@@ -6,24 +6,24 @@
 
 module Syntax where
 
-import qualified Data.Text as T
+import Data.Text (Text)
 
 import OperatorDef
 import Type
 
 type TypeAnnot = Maybe Type
-type Params = [(T.Text, TypeAnnot)]
+type Params = [(Text, TypeAnnot)]
 
 type Module a = [TopLvl a]
 
 data TopLvl a
-    = TLFunc a T.Text Params TypeAnnot (Expr a)
-    | TLOper a OperatorDef T.Text Params TypeAnnot (Expr a)
-    | TLExtern T.Text [Type] Type
+    = TLFunc a Text Params TypeAnnot (Expr a)
+    | TLOper a OperatorDef Text Params TypeAnnot (Expr a)
+    | TLExtern Text [Type] Type
     deriving (Show, Functor)
 
 data Decl a
-    = DVar a Bool T.Text TypeAnnot (Expr a)
+    = DVar a Bool Text TypeAnnot (Expr a)
     | DStmt (Stmt a)
     deriving (Show, Functor)
 
@@ -35,14 +35,14 @@ data Stmt a
 
 data Expr a
     = ELit a Lit
-    | EVar a T.Text
+    | EVar a Text
     | EAssign a (Expr a) (Expr a)
     | EBlock a [Decl a] (Expr a)
     | EIf a (Expr a) (Expr a) (Expr a)
     | EMatch a (Expr a) [(Pattern, Expr a)]
-    | EBinOp a T.Text (Expr a) (Expr a)
-    | EUnaOp a T.Text (Expr a)
-    | EClosure a [T.Text] Params TypeAnnot (Expr a)
+    | EBinOp a Text (Expr a) (Expr a)
+    | EUnaOp a Text (Expr a)
+    | EClosure a [Text] Params TypeAnnot (Expr a)
     | ECall a (Expr a) [Expr a]
     | ECast a Type (Expr a)
     | EDeref a (Expr a)
@@ -53,7 +53,7 @@ data Expr a
 data Lit
     = LInt Integer
     | LFloat Double
-    | LString T.Text
+    | LString Text
     | LChar Char
     | LBool Bool
     | LUnit
@@ -61,7 +61,7 @@ data Lit
 
 data Pattern
     = PLit Lit
-    | PVar T.Text
+    | PVar Text
     | PWild
     deriving (Show)
 
