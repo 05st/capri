@@ -22,9 +22,9 @@ data GenState = GenState
     , indent :: Int
     } deriving (Show)
 
-generate :: FilePath -> [TypedDecl] -> IO ()
-generate file decls = do
-    let res = runWriter (runStateT (runExceptT (initGen decls)) (GenState {
+generate :: FilePath -> TypedModule -> IO ()
+generate file mod = do
+    let res = runWriter (runStateT (runExceptT (initGen mod)) (GenState {
         tmpVarCount = 0,
         indent = 0
     }))
@@ -57,7 +57,7 @@ tmpVar = do
 tellnl :: Builder -> Gen ()
 tellnl = tell . (<> "\n")
 
-initGen :: [TypedDecl] -> Gen ()
+initGen :: TypedModule -> Gen ()
 initGen decls = do
     tellnl "// Juno"
     tellnl "#include <stdlib.h>"
@@ -69,8 +69,8 @@ initGen decls = do
     tellnl "typedef char UNIT;"
     genTopLevelDecls decls
 
-genTopLevelDecls :: [TypedDecl] -> Gen ()
-genTopLevelDecls = foldr ((>>) . genDecl) (return ())
+genTopLevelDecls :: TypedModule -> Gen ()
+genTopLevelDecls = foldr ((>>) . genTopLevel) (return ())
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
@@ -82,7 +82,7 @@ genTopLevel = \case
         tell "return "
         genExpr expr
         tellnl ";\n}"
-    other -> undefined
+    other -> return ()
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case

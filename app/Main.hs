@@ -16,9 +16,9 @@ main = do
     input <- readFile filePath
     let output = last args
     case parse filePath (T.pack input) of
-        Right decls -> print decls
-            {-case infer decls of
+        Right decls ->
+            case analyze decls of
                 Right annotated -> do
                     generate output annotated
-                Left err -> putStrLn err-}
+                Left err -> putStrLn err
         Left err -> putStrLn err

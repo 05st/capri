@@ -23,7 +23,7 @@ import OperatorDef
 
 -- Module
 parseModule :: Parser UntypedModule
-parseModule = sc *> many topLvlDecl <* sc
+parseModule = sc *> manyTill topLvlDecl eof
 
 -- Top Level Declarations
 topLvlDecl :: Parser UntypedTopLvl
@@ -135,7 +135,7 @@ matchExpr = do
     where
         matchBranch = do
             pat <- pattern
-            reservedOp "->"
+            reservedOp "=>"
             (pat,) <$> expression
 
 closure :: Parser UntypedExpr
@@ -143,7 +143,6 @@ closure = do
     closedVars <- brackets (sepBy identifier comma)
     paramsParsed <- params
     retAnnot <- optional typeAnnot
-    reservedOp "=>"
     EClosure () closedVars paramsParsed retAnnot <$> expression
 
 assign :: Parser UntypedExpr
@@ -188,7 +187,7 @@ variable = EVar () <$> (identifier <|> parens operator)
 
 block :: Parser UntypedExpr
 block = braces $ do
-    decls <- many declaration
+    decls <- many (try declaration)
     result <- option (ELit () LUnit) expression
     return $ EBlock () decls result
 

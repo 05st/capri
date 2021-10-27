@@ -25,7 +25,7 @@ fn converge(cr, ci) {
         i2 = i * i;
         iters = iters + 1;
     };
-    return iters;
+    iters
 };
 
 fn plotHelper(xmin, xmax, xstep, ymin, ymax, ystep) {
