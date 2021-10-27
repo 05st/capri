@@ -2,16 +2,17 @@
 {-# Language LambdaCase #-}
 {-# Language TupleSections #-}
 
-module Codegen where
+module Codegen (generate) where
 
 import Control.Monad.Writer
 import Control.Monad.State
 import Control.Monad.Except
 
-import qualified Data.Text as T
+import Data.Text (Text, pack, unpack)
 import qualified Data.Text.Lazy.IO as TIO
 import Data.Text.Lazy.Builder
 import Data.List
+import Data.Foldable (traverse_)
 
 import Syntax
 import Type
@@ -19,211 +20,183 @@ import Type
 type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
     { tmpVarCount :: Int
-    , indent :: Int
+    , genBuffer :: Builder
     } deriving (Show)
 
 generate :: FilePath -> TypedModule -> IO ()
-generate file mod = do
-    let res = runWriter (runStateT (runExceptT (initGen mod)) (GenState {
-        tmpVarCount = 0,
-        indent = 0
-    }))
-    case res of
+generate file mod =
+    let defaultState = GenState { tmpVarCount = 0, genBuffer = mempty } in
+    case runWriter (runStateT (runExceptT (initGen mod)) defaultState) of
         ((Left err, _), _) -> print err
         (_, out) -> TIO.writeFile file (toLazyText out)
 
-upIndent :: Gen ()
-upIndent = do
-    state <- get
-    put (state {indent = indent state + 1})
-
-downIndent :: Gen ()
-downIndent = do
-    state <- get
-    put (state {indent = indent state - 1})
-
-beforeStmt :: Gen String
-beforeStmt = undefined
-
-tmpVar :: Gen T.Text
+tmpVar :: Gen Builder
 tmpVar = do
     state <- get
     let count = tmpVarCount state
-    put (state {tmpVarCount = count + 1})
-    return (T.pack $ names !! count)
+    put (state { tmpVarCount = count + 1})
+    return (fromText . pack $ names !! count)
     where
         names = map ('_' :) $ [1..] >>= flip replicateM ['a'..'z']
 
-tellnl :: Builder -> Gen ()
-tellnl = tell . (<> "\n")
+-- Helper state functions
+out :: Builder -> Gen ()
+out txt = do
+    state <- get
+    put (state { genBuffer = genBuffer state <> txt })
 
+outln :: Builder -> Gen ()
+outln = out . (<> "\n")
+
+outBefore :: Builder -> Gen ()
+outBefore txt = do
+    state <- get
+    put (state { genBuffer = txt <> genBuffer state  })
+
+flushGen :: Gen ()
+flushGen = do
+    state <- get
+    let buf = genBuffer state
+    put (state { genBuffer = mempty })
+    tell buf
+
+collectBuffer :: Gen Builder
+collectBuffer = do
+    state <- get
+    let buf = genBuffer state
+    put (state { genBuffer = mempty })
+    return buf
+
+-- Code generation
 initGen :: TypedModule -> Gen ()
 initGen decls = do
-    tellnl "// Juno"
-    tellnl "#include <stdlib.h>"
-    tellnl "#include <stdio.h>"
-    tellnl "#include <stdint.h>"
-    tellnl "#include <stdbool.h>"
-    tellnl "#include <math.h>"
-    tellnl "#include <time.h>"
-    tellnl "typedef char UNIT;"
+    outln "// Juno compiler output"
+    outln ""
+    outln "// includes"
+    outln "#include <stdlib.h>"
+    outln "#include <stdio.h>"
+    outln "#include <stdint.h>"
+    outln "#include <stdbool.h>"
+    outln "#include <math.h>"
+    outln "#include <time.h>"
+    outln ""
+    outln "// typedefs"
+    outln "typedef char unit;"
+    outln ""
+    outln "// program"
+    flushGen
+
     genTopLevelDecls decls
 
 genTopLevelDecls :: TypedModule -> Gen ()
-genTopLevelDecls = foldr ((>>) . genTopLevel) (return ())
+genTopLevelDecls = foldr ((*>) . genTopLevel) (return ())
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
-    TLFunc t name ps _ expr -> do
-        let (TFunc pts rt) = t
-        let pnames = map fst ps
-        let params = foldr (<>) "" $ intersperse ", " [convertType pt <> " " <> fromText pname | (pt, pname) <- zip pts pnames]
-        tellnl $ convertType rt <> " " <> fromText name <> "(" <> params <> ") {"
-        tell "return "
-        genExpr expr
-        tellnl ";\n}"
-    other -> return ()
+    TLFunc (TFunc ptypes rtype) name params _ body -> do
+        let (pnames, _) = unzip params
+        let rtypeC = convertType rtype
+        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
+        outln (rtypeC <> " " <> fromText name <> "(" <> paramsText <> ")" <> " {")
+        flushGen
+        out "return "
+        genExpr body
+        outln ";"
+        outln "}"
+        flushGen
+    _ -> return ()
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
     DVar t _ name _ expr -> do
-        tell $ convertType t <> " " <> fromText name <> " = "
+        out (convertType t <> " " <> fromText name <> " = ")
         genExpr expr
-        tellnl ";"
+        outln ";"
+        flushGen
     DStmt s -> genStmt s
 
 genStmt :: TypedStmt -> Gen ()
 genStmt = \case
-    SRet e -> tell "return " >> genExpr e >> tellnl ";"
-    SExpr e -> genExpr e >> tellnl ";"
-    SWhile c e -> do
-        tell "while ("
-        genExpr c
-        tell ") "
-        genExpr e
-        tellnl ";"
+    SRet expr -> do
+        out "return "
+        genExpr expr
+        outln ";"
+        flushGen
+    SWhile cond body -> do
+        out "while ("
+        genExpr cond
+        outln ") {"
+        flushGen
+        genExpr body
+        outln ";"
+        outln "}"
+        flushGen
+    SExpr expr -> do
+        genExpr expr
+        outln ";"
+        flushGen
 
 genExpr :: TypedExpr -> Gen ()
 genExpr = \case
-    ELit _ l -> genLit l
-    EVar _ v -> tell (fromText v)
+    ELit _ lit -> out (genLit lit)
+    EVar _ name -> out (fromText name)
     EAssign _ l r -> do
         genExpr l
-        tell " = "
+        out " = "
         genExpr r
-    EBlock _ decls res -> do -- TODO
-        tellnl "({"
-        mapM_ genDecl decls
+    EBlock t decls res -> do
+        cur <- collectBuffer
+        flushGen
+        traverse_ genDecl decls
+        flushGen
+        out cur
         genExpr res
-        tell ";\n})"
-    EIf t c a b -> do
-        tell "(("
-        genExpr c
-        tell ") ? ("
+    EIf _ cond texpr fexpr -> do
+        out "("
+        genExpr cond
+        out ") ? ("
+        genExpr texpr
+        out ") : ("
+        genExpr fexpr
+        out ")"
+    EMatch {} -> throwError "no match exprs yet"
+    EBinOp _ oper a b -> do
         genExpr a
-        tell ") : ("
+        out (fromText oper)
         genExpr b
-        tell "))"
-    EBinOp _ op l r -> do
-        case op of
-            _ | op `elem` ["+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<=", "||", "&&"] -> do
-                genExpr l
-                tell (fromText op)
-                genExpr r
-            _ -> undefined
-    ECall _ f args -> do
-        genExpr f
-        tell "("
-        sequence_ (intersperse (tell ", ") (map genExpr args))
-        tell ")"
-    ECast _ t e -> do
-        tell $ "(" <> convertType t <> ")"
-        genExpr e
-    EDeref _ e -> do
-        tell "*("
-        genExpr e
-        tell ")"
-    ERef _ e -> do
-        tell "&"
-        genExpr e
+    EUnaOp _ oper expr -> throwError "no unary opers yet"
+    EClosure {} -> throwError "no closures yet"
+    ECall _ fnexpr args -> do
+        genExpr fnexpr
+        out "("
+        sequence_ (intersperse (out ", ") (map genExpr args))
+        out ")"
+    ECast _ targ expr -> do 
+        out ("(" <> convertType targ <> ")")
+        genExpr expr
+    EDeref _ expr -> do
+        out "*"
+        genExpr expr
+    ERef _ expr -> do
+        out "&"
+        genExpr expr
     ESizeof _ arg -> do
+        out "sizeof("
         case arg of
-            Left t -> tell $ "sizeof(" <> convertType t <> ")"
-            Right e -> do
-                tell "sizeof("
-                genExpr e
-                tell ")"
-    EMatch t m bs -> do
-        tellnl "({"
-        rvar <- fromText <$> tmpVar
-        mvar <- fromText <$> tmpVar
-        let mvarType = typeOfExpr m
-        tellnl $ convertType t <> " " <> rvar <> ";"
-        tell $ convertType mvarType <> " " <> mvar <> " = "
-        genExpr m
-        tellnl ";"
-        let branches = takeWhileOneMore
-                (\case
-                    (PWild, _) -> False
-                    (PVar _, _) -> False
-                    _ -> True) bs
-        let isExhaustive = any
-                (\case
-                    (PWild, _) -> True
-                    (PVar _, _) -> True
-                    _ -> False) branches
-        genMatchBranches mvarType rvar mvar branches
-        unless isExhaustive (do
-            tellnl " else {"
-            tellnl "printf(\"PANIC: Non-exhaustive match expression\\n\");"
-            tellnl "exit(-1);"
-            tell "}")
-        tellnl $ "\n" <> rvar <> ";"
-        tell "})"
-        return ();
-    other -> undefined
-
-genLit :: Lit -> Gen ()
+            Left typ -> out (convertType typ)
+            Right expr -> genExpr expr
+        out ")"
+    
+genLit :: Lit -> Builder
 genLit = \case
-    LInt n -> tell (fromString $ show n)
-    LFloat n -> tell (fromString $ show n)
-    LString s -> tell $ fromString (show (T.unpack s))
-    LChar c -> tell $ "'" <> singleton c <> "'"
-    LBool b -> tell $ if b then "true" else "false"
-    LUnit -> tell "0"
+    LInt n -> (fromString . show) n
+    LFloat n -> (fromString . show) n
+    LString s -> (fromString . show . unpack) s
+    LChar c -> "'" <> singleton c <> "'"
+    LBool b -> if b then "true" else "false"
+    LUnit -> "0"
 
-genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
-genMatchBranches mvarType rvar mvar [branch] = do
-    genMatchBranch mvarType rvar mvar branch
-genMatchBranches mvarType rvar mvar (branch : rest) = do
-    genMatchBranch mvarType rvar mvar branch
-    tell " else "
-    genMatchBranches mvarType rvar mvar rest
-genMatchBranches _ _ _ _= return ()
-
-genMatchBranch :: Type -> Builder -> Builder -> (Pattern, TypedExpr) -> Gen ()
-genMatchBranch _ rvar mvar (PLit l, bexpr) = do
-    tell $ "if (" <> mvar <> " == "
-    genLit l
-    tellnl ") {"
-    tell $ rvar <> " = "
-    genExpr bexpr
-    tellnl ";"
-    tell "}"
-genMatchBranch mvarType rvar mvar (PVar var, bexpr) = do
-    tellnl "{"
-    tellnl $ convertType mvarType <> " " <> fromText var <> " = " <> mvar <> ";"
-    tell $ rvar <> " = "
-    genExpr bexpr
-    tellnl ";"
-    tell "}"
-genMatchBranch _ rvar mvar (PWild, bexpr) = do
-    tellnl "{"
-    tell $ rvar <> " = "
-    genExpr bexpr
-    tellnl ";"
-    tell "}"
-
+-- Juno types to C types
 convertType :: Type -> Builder
 convertType = \case
     TInt8 -> "int8_t"
@@ -240,9 +213,10 @@ convertType = \case
     TStr -> "char*"
     TChar -> "char"
     TBool -> "bool"
-    TUnit -> "UNIT"
+    TUnit -> "unit"
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
 
+-- Utility
 takeWhileOneMore :: (a -> Bool) -> [a] -> [a]
 takeWhileOneMore p = foldr (\x ys -> if p x then x:ys else [x]) []
