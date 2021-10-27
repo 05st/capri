@@ -13,6 +13,8 @@ import qualified Data.Text.Lazy.IO as TIO
 import Data.Text.Lazy.Builder
 import Data.List
 import Data.Foldable (traverse_)
+import Data.Maybe
+import qualified Data.Map as M
 
 import Syntax
 import Type
@@ -21,11 +23,22 @@ type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
     { tmpVarCount :: Int
     , genBuffer :: Builder
+    , forwardDecls :: Builder
+    , program :: Builder
+    , operMap :: M.Map Text Int
+    , operCount :: Int
     } deriving (Show)
 
 generate :: FilePath -> TypedModule -> IO ()
 generate file mod =
-    let defaultState = GenState { tmpVarCount = 0, genBuffer = mempty } in
+    let defaultState = GenState
+            { tmpVarCount = 0
+            , genBuffer = mempty
+            , forwardDecls = mempty
+            , program = mempty
+            , operMap = M.empty
+            , operCount = 0 
+            } in
     case runWriter (runStateT (runExceptT (initGen mod)) defaultState) of
         ((Left err, _), _) -> print err
         (_, out) -> TIO.writeFile file (toLazyText out)
@@ -38,6 +51,13 @@ tmpVar = do
     return (fromText . pack $ names !! count)
     where
         names = map ('_' :) $ [1..] >>= flip replicateM ['a'..'z']
+
+operId :: Gen Int
+operId = do
+    state <- get
+    let count = operCount state
+    put (state { operCount = count + 1 })
+    return count
 
 -- Helper state functions
 out :: Builder -> Gen ()
@@ -57,8 +77,8 @@ flushGen :: Gen ()
 flushGen = do
     state <- get
     let buf = genBuffer state
-    put (state { genBuffer = mempty })
-    tell buf
+    let prog = program state
+    put (state { genBuffer = mempty, program = prog <> buf })
 
 collectBuffer :: Gen Builder
 collectBuffer = do
@@ -67,35 +87,50 @@ collectBuffer = do
     put (state { genBuffer = mempty })
     return buf
 
+addForwardDecl :: Builder -> Gen ()
+addForwardDecl txt = do
+    state <- get
+    let curr = forwardDecls state
+    put (state { forwardDecls = curr <> txt <> "\n" })
+
+addOperEntry :: Text -> Gen Int
+addOperEntry oper = do
+    id <- operId
+    state <- get
+    let map = operMap state
+    put (state { operMap = M.insert oper id map })
+    return id
+
 -- Code generation
 initGen :: TypedModule -> Gen ()
 initGen decls = do
-    outln "// Juno compiler output"
-    outln ""
-    outln "// includes"
-    outln "#include <stdlib.h>"
-    outln "#include <stdio.h>"
-    outln "#include <stdint.h>"
-    outln "#include <stdbool.h>"
-    outln "#include <math.h>"
-    outln "#include <time.h>"
-    outln ""
-    outln "// typedefs"
-    outln "typedef char unit;"
-    outln ""
-    outln "// program"
-    flushGen
-
     genTopLevelDecls decls
     flushGen
 
-    outln ""
-    outln "// entry point"
-    outln "int main() {"
-    outln "\tjuno__main();"
-    outln "\treturn 0;"
-    outln "}"
-    flushGen
+    tell "// Juno compiler output\n"
+    tell "\n"
+    tell "// includes\n"
+    tell "#include <stdlib.h>\n"
+    tell "#include <stdio.h>\n"
+    tell "#include <stdint.h>\n"
+    tell "#include <stdbool.h>\n"
+    tell "#include <math.h>\n"
+    tell "#include <time.h>\n"
+    tell "\n"
+    tell "// typedefs\n"
+    tell "typedef char unit;\n"
+    tell "\n"
+    tell "// forward decls\n"
+    gets forwardDecls >>= tell
+    tell "\n"
+    tell "// program\n"
+    gets program >>= tell
+    tell "\n"
+    tell "// entry point\n"
+    tell "int main() {\n"
+    tell "\t_main();\n"
+    tell "\treturn 0;\n"
+    tell "}"
 
 genTopLevelDecls :: TypedModule -> Gen ()
 genTopLevelDecls = foldr ((*>) . genTopLevel) (return ())
@@ -103,17 +138,39 @@ genTopLevelDecls = foldr ((*>) . genTopLevel) (return ())
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
     TLFunc (TFunc ptypes rtype) name_ params _ body -> do
-        let name = if name_ == "main" then "juno__main" else name_
+        let name = if name_ == "main" then "_main" else name_
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
         let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
-        outln (rtypeC <> " " <> fromText name <> "(" <> paramsText <> ")" <> " {")
+        let fnDecl = rtypeC <> " " <> fromText name <> "(" <> paramsText <> ")"
+        outln (fnDecl <> " {")
         flushGen
         out "return "
         genExpr body
         outln ";"
         outln "}"
         flushGen
+
+        addForwardDecl (fnDecl <> ";")
+
+    TLOper (TFunc ptypes rtype) opdef oper params _ body -> do
+        let (pnames, _) = unzip params
+        let rtypeC = convertType rtype
+        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
+
+        id <- addOperEntry oper
+        let fnDecl = rtypeC <> " _operator" <> fromString (show id) <> "(" <> paramsText <> ")"
+
+        outln (fnDecl <> " {")
+        flushGen
+        out "return "
+        genExpr body
+        outln ";"
+        outln "}"
+        flushGen
+
+        addForwardDecl (fnDecl <> ";")
+
     _ -> return ()
 
 genDecl :: TypedDecl -> Gen ()
@@ -171,9 +228,19 @@ genExpr = \case
         out ")"
     EMatch {} -> throwError "no match exprs yet"
     EBinOp _ oper a b -> do
-        genExpr a
-        out (fromText oper)
-        genExpr b
+        if oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
+            then do
+                genExpr a
+                out (fromText oper)
+                genExpr b
+            else do
+                map <- gets operMap
+                let id = (fromString . show) (fromJust $ M.lookup oper map)
+                out ("_operator" <> id <> "(")
+                genExpr a
+                out ", "
+                genExpr b
+                out ")"
     EUnaOp _ oper expr -> throwError "no unary opers yet"
     EClosure {} -> throwError "no closures yet"
     ECall _ fnexpr args -> do

@@ -1,0 +1,14 @@
+extern printf(str, i32): unit;
+extern scanf(str, i32*): unit;
+
+fn factorial(n)
+    if n <= 1
+        1
+    else
+        n * factorial(n - 1);
+
+fn main() {
+    mut n := 0;
+    scanf("%d", &n);
+    printf("%d\n", factorial(n));
+};
