@@ -20,5 +20,5 @@ main = do
             case analyze decls of
                 Right annotated -> do
                     generate output annotated
-                Left err -> putStrLn err
-        Left err -> putStrLn err
+                Left err -> putStrLn ("ERROR (ANALYZER): " ++ err)
+        Left err -> putStrLn ("ERROR (PARSER): " ++ err)
