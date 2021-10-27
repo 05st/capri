@@ -87,13 +87,23 @@ initGen decls = do
     flushGen
 
     genTopLevelDecls decls
+    flushGen
+
+    outln ""
+    outln "// entry point"
+    outln "int main() {"
+    outln "\tjuno__main();"
+    outln "\treturn 0;"
+    outln "}"
+    flushGen
 
 genTopLevelDecls :: TypedModule -> Gen ()
 genTopLevelDecls = foldr ((*>) . genTopLevel) (return ())
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
-    TLFunc (TFunc ptypes rtype) name params _ body -> do
+    TLFunc (TFunc ptypes rtype) name_ params _ body -> do
+        let name = if name_ == "main" then "juno__main" else name_
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
         let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
