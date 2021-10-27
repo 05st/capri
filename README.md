@@ -9,16 +9,17 @@ Takes inspiration from languages such as Rust or Haskell.
 extern printf(str, i32): unit;
 extern scanf(str, i32*): unit;
 
-fn factorial(n)
+// Factorial
+fn postfix 10 ! (n)
   if n <= 1
     1
   else
-    n * factorial(n - 1);
+    n * (n - 1)!;
 
 fn main() {
   mut n := 0;
   scanf("%d", &n);
-  printf("%d\n", factorial(n));
+  printf("%d\n", n!);
 };
 ```
 More examples [here](https://github.com/05st/juno/tree/master/examples)

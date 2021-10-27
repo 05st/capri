@@ -47,11 +47,12 @@ topLvlOperDecl = do
     oper <- operator
     paramsParsed <- params
     retAnnot <- optional typeAnnot
-    expr <- expression
-    semi
 
     let opdef = OperatorDef assocParsed precedence oper
     S.modify (opdef :)
+
+    expr <- expression
+    semi
 
     return $ TLOper () opdef oper paramsParsed retAnnot expr
     where

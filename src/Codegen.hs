@@ -241,7 +241,12 @@ genExpr = \case
                 out ", "
                 genExpr b
                 out ")"
-    EUnaOp _ oper expr -> throwError "no unary opers yet"
+    EUnaOp _ oper expr -> do
+        map <- gets operMap
+        let id = (fromString . show) (fromJust $ M.lookup oper map)
+        out ("_operator" <> id <> "(")
+        genExpr expr
+        out ")"
     EClosure {} -> throwError "no closures yet"
     ECall _ fnexpr args -> do
         genExpr fnexpr
