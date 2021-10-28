@@ -12,13 +12,13 @@ class Substitutable a where
     apply :: Substitution -> a -> a
 
 instance Substitutable Type where
-    tvs (TCon _) = Set.empty
+    tvs (TCon _ tps) = tvs tps
     tvs (TVar tv) = Set.singleton tv
     tvs (TFunc a b) = tvs a `Set.union` tvs b
     tvs (TPtr t) = tvs t
     apply s t@(TVar tv) = Map.findWithDefault t tv s
     apply s (TFunc a b) = TFunc (apply s a) (apply s b)
-    apply s t@(TCon _) = t
+    apply s (TCon c tps) = TCon c (apply s tps)
     apply s (TPtr t) = TPtr (apply s t)
 
 instance Substitutable TypeScheme where

@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language: Juno
 " Maintainer: 05st
-" Latest Revision: 25 October 2021
+" Latest Revision: 28 October 2021
 
 if exists("b:current_syntax")
     finish
@@ -11,7 +11,7 @@ endif
 syn keyword Keyword import extern infixl infixr infix prefix postfix
 
 " Keywords
-syn keyword Keyword fn op return sizeof
+syn keyword Keyword fn op type return sizeof
 syn keyword StorageClass mut
 
 " Conditionals
@@ -62,3 +62,6 @@ syn region Comment start="/\*" end="\*/" contains=Todo
 
 " Function Calls
 syn match Function "\w\(\w\)*("he=e-1,me=e-1
+
+" Parameterized Types
+syn match Function "\w\(\w\)*<"he=e-1,me=e-1

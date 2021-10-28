@@ -22,9 +22,10 @@ import Type
 type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
     { tmpVarCount :: Int
-    , genBuffer :: Builder
+    , typedefs :: Builder
     , forwardDecls :: Builder
     , program :: Builder
+    , genBuffer :: Builder
     , operMap :: M.Map Text Int
     , operCount :: Int
     } deriving (Show)
@@ -33,13 +34,14 @@ generate :: FilePath -> TypedModule -> IO ()
 generate file mod =
     let defaultState = GenState
             { tmpVarCount = 0
-            , genBuffer = mempty
+            , typedefs = mempty
             , forwardDecls = mempty
             , program = mempty
+            , genBuffer = mempty
             , operMap = M.empty
             , operCount = 0 
             } in
-    case runWriter (runStateT (runExceptT (initGen mod)) defaultState) of
+    case runWriter (runStateT (runExceptT (runGen mod)) defaultState) of
         ((Left err, _), _) -> print err
         (_, out) -> TIO.writeFile file (toLazyText out)
 
@@ -102,8 +104,8 @@ addOperEntry oper = do
     return id
 
 -- Code generation
-initGen :: TypedModule -> Gen ()
-initGen decls = do
+runGen :: TypedModule -> Gen ()
+runGen decls = do
     genTopLevelDecls decls
     flushGen
 
@@ -119,6 +121,11 @@ initGen decls = do
     tell "\n"
     tell "// typedefs\n"
     tell "typedef char unit;\n"
+    tell "typedef struct string {\n"
+    tell "\tchar* data;\n"
+    tell "\tint len;\n"
+    tell "} string;\n"
+    gets typedefs >>= tell
     tell "\n"
     tell "// forward decls\n"
     gets forwardDecls >>= tell
@@ -352,10 +359,11 @@ convertType = \case
     TFloat32 -> "float"
     TFloat64 -> "double"
     TPtr t -> convertType t <> singleton '*'
-    TStr -> "char*"
+    TStr -> "string"
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"
+    TCon name [] -> fromText name
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
 

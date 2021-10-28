@@ -1,0 +1,5 @@
+type IntOrBool = Int(i32) | Bool(bool);
+
+fn main() {
+    xyz: IntOrBool := Bool(false);
+};

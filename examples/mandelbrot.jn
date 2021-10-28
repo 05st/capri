@@ -48,6 +48,6 @@ fn main() {
     im := 0.07;
 
     t: i32 := clock();
-    plotHelper(rs, rs + (rm*f64(78)), rm, is, is + (im*f64(40)), im);
+    plotHelper(rs, rs + (rm*(f64)78), rm, is, is + (im*(f64)40), im);
     printf("Mandelbrot Render (clock ticks): %d\n", clock() - t);
 };

@@ -20,6 +20,7 @@ data TopLvl a
     = TLFunc a Text Params TypeAnnot (Expr a)
     | TLOper a OperatorDef Text Params TypeAnnot (Expr a)
     | TLExtern Text [Type] Type
+    | TLType Text [TVar] [(Text, [Type])]
     deriving (Show, Functor)
 
 data Decl a

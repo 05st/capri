@@ -26,6 +26,7 @@ data InferState = InferState
     { environment :: AEnv
     , freshCount :: Int
     , topLvlTmps :: M.Map Text Type
+    , mainExists :: Bool
     } deriving (Show)
 
 analyze :: UntypedModule -> Either String TypedModule
@@ -56,7 +57,7 @@ instantiate (Forall vs t) = do
 
 runInfer :: UntypedModule -> Either String TypedModule
 runInfer mod =
-    let defaultState = InferState { environment = M.empty, freshCount = 0, topLvlTmps = M.empty } in
+    let defaultState = InferState { environment = M.empty, freshCount = 0, topLvlTmps = M.empty, mainExists = False } in
     case runIdentity $ runExceptT $ runRWST (inferModule mod) () defaultState of
         Left err -> Left err
         Right (mod', _, consts) -> do
@@ -80,7 +81,25 @@ insertTmpVars = \case
         state <- get
         put (state { topLvlTmps = M.insert oper var (topLvlTmps state) })
 
-    TLExtern {} -> return ()
+    TLType typeName typeParams cons -> insertValueCons typeName typeParams cons
+
+    TLExtern name ptypes rtype -> insertEnv (name, (Forall [] $ TFunc ptypes rtype, False))
+
+insertValueCons :: Text -> [TVar] -> [(Text, [Type])] -> Infer ()
+insertValueCons _ _ [] = return ()
+insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
+    let typeParams' = map TVar typeParams
+    let varsTypeParams = tvs typeParams'
+    let varsCon = tvs conTypes
+
+    env <- gets environment
+    if (varsTypeParams `S.intersection` varsCon) /= varsCon
+        then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
+             in throwError ("Undefined type variables " ++ show undefineds)
+        else let scheme = case conTypes of
+                    [] -> Forall [] (TCon typeName typeParams') -- generalize env (TParam typeNam)
+                    _ -> Forall [] (TFunc conTypes (TCon typeName typeParams')) --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
+             in insertEnv (conName, (scheme, False)) *> insertValueCons typeName typeParams restCons
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
@@ -88,6 +107,9 @@ inferTopLvl = \case
         alreadyDefined <- exists name
         if alreadyDefined then throwError ("Function '" ++ unpack name ++ "' already defined")
         else do
+            when (name == "main") (do
+                state <- get
+                put (state { mainExists = True }))
             (body', typ) <- inferFn name params rtann body
             return (TLFunc typ name params rtann body')
 
@@ -98,9 +120,8 @@ inferTopLvl = \case
             (body', typ) <- inferFn oper params rtann body
             return (TLOper typ opdef oper params rtann body')
 
-    TLExtern name ptypes rtype -> do
-        insertEnv (name, (Forall [] $ TFunc ptypes rtype, False))
-        return (TLExtern name ptypes rtype)
+    TLType typeName typeParams cons -> return (TLType typeName typeParams cons)
+    TLExtern name ptypes rtype -> return (TLExtern name ptypes rtype)
 
 inferFn :: Text -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
 inferFn name params rtann body = do
@@ -329,9 +350,9 @@ unify :: Type -> Type -> Solve Substitution
 unify a b | a == b = return M.empty
 unify (TVar v) t = bind v t
 unify t (TVar v) = bind v t
-unify a@(TCon c1) b@(TCon c2)
+unify a@(TCon c1 ts1) b@(TCon c2 ts2)
     | c1 /= c2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
-    | otherwise = return M.empty
+    | otherwise = unifyMany ts1 ts2
 unify a@(TFunc pts rt) b@(TFunc pts2 rt2)
     | length pts /= length pts2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = unifyMany (rt : pts) (rt2 : pts2)

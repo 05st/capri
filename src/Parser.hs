@@ -27,7 +27,7 @@ parseModule = sc *> manyTill topLvlDecl eof
 
 -- Top Level Declarations
 topLvlDecl :: Parser UntypedTopLvl
-topLvlDecl = topLvlFuncDecl <|> topLvlOperDecl <|> topLvlExternDecl
+topLvlDecl = topLvlFuncDecl <|> topLvlOperDecl <|> topLvlExternDecl <|> topLvlTypeDecl
 
 topLvlFuncDecl :: Parser UntypedTopLvl
 topLvlFuncDecl = do
@@ -67,6 +67,21 @@ topLvlExternDecl = do
     retType <- typeAnnot
     semi
     return (TLExtern fn paramTypes retType)
+
+topLvlTypeDecl :: Parser UntypedTopLvl
+topLvlTypeDecl = do
+    reserved "type"
+    typeName <- typeIdentifier
+    typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
+    reservedOp "="
+    valueCons <- sepBy1 valueCon (symbol "|")
+    semi
+    return (TLType typeName typeParams valueCons)
+    where
+        valueCon = do
+            conName <- typeIdentifier
+            types <- option [] (parens (sepBy type' comma))
+            return (conName, types)
 
 -- Declarations
 declaration :: Parser UntypedDecl
@@ -173,9 +188,8 @@ sizeof = do
 
 cast :: Parser UntypedExpr
 cast = do
-    typ <- type'
-    arg <- parens expression
-    return $ ECast () typ arg
+    typ <- parens type'
+    ECast () typ <$> expression
 
 call :: Parser UntypedExpr
 call = do
@@ -204,7 +218,7 @@ integer = try octal <|> try binary <|> try hexadecimal <|> signedInteger
 
 -- Parse types
 type' :: Parser Type
-type' = try typeFunc <|> typeBase
+type' = try typeFunc <|> try typeCon <|> typeBase
 
 typeFunc :: Parser Type
 typeFunc = do
@@ -212,13 +226,19 @@ typeFunc = do
     reservedOp "->"
     TFunc inputTypes <$> type'
 
+typeCon :: Parser Type
+typeCon = do
+    con <- typeIdentifier
+    params <- option [] (angles (sepBy type' comma))
+    return (TCon con params)
+
 typeBase :: Parser Type
 typeBase = do
-    t <- typePrim <|> (TCon <$> typeIdentifier) <|> parens type'
+    t <- typePrim {-<|> (TVar . TV <$> identifier)-} <|> parens type'
     option t (TPtr t <$ symbol "*")
 
 typePrim :: Parser Type
-typePrim = choice $ map (\s -> TCon s <$ reserved s)
+typePrim = choice $ map (\s -> TCon s [] <$ reserved s)
     ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "str", "char", "bool", "unit"]
 
 -- Parse patterns
