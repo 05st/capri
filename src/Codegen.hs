@@ -23,6 +23,7 @@ type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
     { tmpVarCount :: Int
     , typedefs :: Builder
+    , valueCons :: Builder
     , forwardDecls :: Builder
     , program :: Builder
     , genBuffer :: Builder
@@ -35,6 +36,7 @@ generate file mod =
     let defaultState = GenState
             { tmpVarCount = 0
             , typedefs = mempty
+            , valueCons = mempty
             , forwardDecls = mempty
             , program = mempty
             , genBuffer = mempty
@@ -103,6 +105,18 @@ addOperEntry oper = do
     put (state { operMap = M.insert oper id map })
     return id
 
+addTypedef :: Builder -> Gen ()
+addTypedef txt = do
+    state <- get
+    let curr = typedefs state
+    put (state { typedefs = curr <> txt })
+
+addValueCon :: Builder -> Gen ()
+addValueCon txt = do
+    state <- get
+    let curr = valueCons state
+    put (state { valueCons = curr <> txt })
+
 -- Code generation
 runGen :: TypedModule -> Gen ()
 runGen decls = do
@@ -126,6 +140,9 @@ runGen decls = do
     tell "\tint len;\n"
     tell "} string;\n"
     gets typedefs >>= tell
+    tell "\n"
+    tell "// value constructors\n"
+    gets valueCons >>= tell
     tell "\n"
     tell "// forward decls\n"
     gets forwardDecls >>= tell
@@ -178,7 +195,51 @@ genTopLevel = \case
 
         addForwardDecl (fnDecl <> ";")
 
+    TLType typeName tparams_ valueCons -> do
+        let typeName' = fromText typeName
+        let (conNames, conTypes) = unzip valueCons
+        let conNames' = map fromText conNames
+
+        traverse_ (genTypeVariant typeName') valueCons
+
+        addTypedef $
+            "typedef union " <> typeName' <> "Variants {\n"
+            <> (if length conNames' == 0 then "\tchar dummy;\n" else "")
+            <> mconcat ["\t" <> typeName' <> conName <> " " <> conName <> ";\n" | conName <- conNames']
+            <> "} " <> typeName' <> "Variants;\n"
+
+        addTypedef $
+            "typedef enum " <> typeName' <> "Tag {\n"
+            <> mconcat ["\t" <> conName <> "Tag,\n" | conName <- conNames']
+            <> "} " <> typeName' <> "Tag;\n"
+
+        addTypedef $
+            "typedef struct " <> typeName' <> " {\n"
+            <> "\t" <> typeName' <> "Tag tag;\n"
+            <> "\t" <> typeName' <> "Variants data;\n"
+            <> "} " <> typeName' <> ";\n"
+
     _ -> return ()
+
+genTypeVariant :: Builder -> (Text, [Type]) -> Gen ()
+genTypeVariant typeName (conName, conTypes) = do
+    let conName' = fromText conName
+    let tIds = map (fromString . show) [0..]
+    let conParamList = [convertType conType <> " _" <> tId | (conType, tId) <- zip conTypes tIds]
+
+    addTypedef $
+        "typedef struct " <> typeName <> conName' <> " {\n"
+        <> (if length conTypes == 0 then "\tchar dummy;\n" else "")
+        <> mconcat (map (\p -> "\t" <> p <> ";\n") conParamList)
+        <> "} " <> typeName <> conName' <> ";\n"
+
+    addValueCon $
+        "inline static " <> typeName <> " " <> conName' <> "(" <> mconcat (intersperse ", " conParamList) <> ") {\n"
+        <> "\t" <> typeName <> " result;\n"
+        <> "\t" <> "result.tag = " <> conName' <> "Tag;\n"
+        <> mconcat ["\tresult.data." <> conName' <> "._" <> tId <> " = _" <> tId <> ";\n" | tId <- take (length conTypes) tIds]
+        <> "\treturn result;\n"
+        <> "}\n"
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case

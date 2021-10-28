@@ -1,4 +1,5 @@
 type IntOrBool = Int(i32) | Bool(bool);
+type TestType = Nil;
 
 fn main() {
     xyz: IntOrBool := Bool(false);
