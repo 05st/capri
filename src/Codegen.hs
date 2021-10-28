@@ -226,7 +226,38 @@ genExpr = \case
         out ") : ("
         genExpr fexpr
         out ")"
-    EMatch {} -> throwError "no match exprs yet"
+    EMatch t mexpr branches -> do
+        cur <- collectBuffer
+
+        rvar <- tmpVar
+        mvar <- tmpVar
+        let mvarType = typeOfExpr mexpr
+        outln (convertType t <> " " <> rvar <> ";")
+        out (convertType mvarType <> " " <> mvar <> " = ")
+        genExpr mexpr
+        outln ";"
+
+        let branches' = takeWhileOneMore
+                (\case
+                    (PWild, _) -> False
+                    (PVar _, _) -> False
+                    _ -> True) branches
+        let isExhaustive = any
+                (\case
+                    (PWild, _) -> True
+                    (PVar _, _) -> True
+                    _ -> False) branches
+
+        genMatchBranches mvarType rvar mvar branches'
+
+        unless isExhaustive (do
+            outln " else {"
+            outln "printf(\"PANIC: Non-exhaustive match expression\\n\");"
+            outln "exit(-1);"
+            out "}")
+
+        outln ""
+        out (cur <> rvar)
     EBinOp _ oper a b -> do
         if oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
             then do
@@ -268,6 +299,35 @@ genExpr = \case
             Left typ -> out (convertType typ)
             Right expr -> genExpr expr
         out ")"
+
+genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
+genMatchBranches mvarType rvar mvar [branch] = genMatchBranch mvarType rvar mvar branch
+genMatchBranches mvarType rvar mvar (branch : rest) = do
+    genMatchBranch mvarType rvar mvar branch
+    out " else "
+    genMatchBranches mvarType rvar mvar rest
+genMatchBranches _ _ _ _ = return ()
+
+genMatchBranch :: Type -> Builder -> Builder -> (Pattern, TypedExpr) -> Gen ()
+genMatchBranch _ rvar mvar (PLit lit, bexpr) = do
+    outln ("if (" <> mvar <> " == " <> genLit lit <> ") {")
+    out (rvar <> " = ")
+    genExpr bexpr
+    outln ";"
+    out "}"
+genMatchBranch mvarType rvar mvar (PVar var, bexpr) = do
+    outln "{"
+    outln (convertType mvarType <> " " <> fromText var <> " = " <> mvar <> ";")
+    out (rvar <> " = ")
+    genExpr bexpr
+    outln ";"
+    out "}"
+genMatchBranch _ rvar mvar (PWild, bexpr) = do
+    outln "{"
+    out (rvar <> " = ")
+    genExpr bexpr
+    outln ";"
+    out "}"
     
 genLit :: Lit -> Builder
 genLit = \case

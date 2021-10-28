@@ -13,5 +13,5 @@ fn odd(n)
         even(n - 1);
 
 fn main() {
-    printf("%d", even(20));
+    printf("%d\n", even(20));
 };
