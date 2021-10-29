@@ -248,8 +248,8 @@ pattern = parens pattern <|> patternCon <|> patternWild <|> patternVar <|> patte
 patternCon :: Parser Pattern
 patternCon = do
     conName <- typeIdentifier
-    args <- option [] (parens (sepBy pattern comma))
-    return (PCon conName args)
+    binds <- option [] (parens (sepBy (identifier <|> symbol "_") comma))
+    return (PCon conName binds)
 
 patternWild :: Parser Pattern
 patternWild = PWild <$ reserved "_"

@@ -1,10 +1,13 @@
+extern printf(str, i32): unit;
+
 type IntOrBool = Int(i32) | Bool(bool);
 type TestType = Nil;
 
 fn main() {
-    xyz: IntOrBool := Bool(false);
-    match xyz {
-        Bool(b) => 0,
+    xyz: IntOrBool := Int(420);
+    test := match xyz {
+        Bool(_) => 0,
         Int(n) => n
     };
+    printf("%d\n", test);
 };

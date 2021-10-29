@@ -241,6 +241,9 @@ genTypeVariant typeName (conName, conTypes) = do
         <> "\treturn result;\n"
         <> "}\n"
 
+    addTypedef $
+        mconcat ["typedef " <> convertType conType <> " " <> conName' <> "_" <> tId <> ";\n" | (conType, tId) <- zip conTypes tIds]
+
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
     DVar t _ name _ expr -> do
@@ -392,6 +395,17 @@ genMatchBranch mvarType rvar mvar (PVar var, bexpr) = do
     out "}"
 genMatchBranch _ rvar mvar (PWild, bexpr) = do
     outln "{"
+    out (rvar <> " = ")
+    genExpr bexpr
+    outln ";"
+    out "}"
+genMatchBranch mvarType rvar mvar (PCon conName binds, bexpr) = do
+    let conName' = fromText conName
+    let binds' = map fromText binds
+    let tIds = map (fromString . show) [0..]
+    outln ("if (" <> mvar <> ".tag == " <> fromText conName <> "Tag) {")
+    out $
+        mconcat [conName' <> "_" <> tId <> " " <> bind <> " = " <> mvar <> ".data." <> conName' <> "._" <> tId <> ";\n"| (bind, tId) <- zip binds' tIds]
     out (rvar <> " = ")
     genExpr bexpr
     outln ";"
