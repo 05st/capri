@@ -243,7 +243,13 @@ typePrim = choice $ map (\s -> TCon s [] <$ reserved s)
 
 -- Parse patterns
 pattern :: Parser Pattern
-pattern = parens pattern <|> patternWild <|> patternVar <|> patternLit
+pattern = parens pattern <|> patternCon <|> patternWild <|> patternVar <|> patternLit
+
+patternCon :: Parser Pattern
+patternCon = do
+    conName <- typeIdentifier
+    args <- option [] (parens (sepBy pattern comma))
+    return (PCon conName args)
 
 patternWild :: Parser Pattern
 patternWild = PWild <$ reserved "_"

@@ -3,4 +3,8 @@ type TestType = Nil;
 
 fn main() {
     xyz: IntOrBool := Bool(false);
+    match xyz {
+        Bool(b) => 0,
+        Int(n) => n
+    };
 };

@@ -303,6 +303,15 @@ inferPattern (PLit lit) = return (inferLit lit, [])
 inferPattern PWild = do
     ptype <- fresh
     return (ptype, [])
+inferPattern (PCon conName pats) = do
+    (ptypes, vars) <- unzip <$> traverse inferPattern pats
+    conType <- lookupType conName
+    t <- fresh
+    let conType' = case pats of
+            [] -> t
+            _ -> TFunc ptypes t
+    constrain (CEqual conType' conType)
+    return (t, concat vars)
 
 -- Environment helpers
 scoped :: (AEnv -> AEnv) -> Infer a -> Infer a

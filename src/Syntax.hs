@@ -61,7 +61,8 @@ data Lit
     deriving (Show)
 
 data Pattern
-    = PLit Lit
+    = PCon Text [Pattern]
+    | PLit Lit
     | PVar Text
     | PWild
     deriving (Show)
