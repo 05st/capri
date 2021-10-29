@@ -25,7 +25,7 @@ extern printf(str, i32): unit;
 extern scanf(str, i32*): unit;
 
 // Factorial
-fn postfix 10 ! (n)
+op postfix 10 ! (n)
   if n <= 1
     1
   else
