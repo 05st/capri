@@ -404,8 +404,7 @@ genMatchBranch mvarType rvar mvar (PCon conName binds, bexpr) = do
     let binds' = map fromText binds
     let tIds = map (fromString . show) [0..]
     outln ("if (" <> mvar <> ".tag == " <> fromText conName <> "Tag) {")
-    out $
-        mconcat [conName' <> "_" <> tId <> " " <> bind <> " = " <> mvar <> ".data." <> conName' <> "._" <> tId <> ";\n"| (bind, tId) <- zip binds' tIds]
+    out $ mconcat [conName' <> "_" <> tId <> " " <> bind <> " = " <> mvar <> ".data." <> conName' <> "._" <> tId <> ";\n" | (bind, tId) <- zip binds' tIds, bind /= "_"]
     out (rvar <> " = ")
     genExpr bexpr
     outln ";"

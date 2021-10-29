@@ -1,7 +1,6 @@
 extern printf(str, i32): unit;
 
 type IntOrBool = Int(i32) | Bool(bool);
-type TestType = Nil;
 
 fn main() {
     xyz: IntOrBool := Int(420);
