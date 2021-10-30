@@ -16,6 +16,7 @@ import Data.List
 import Data.Foldable (traverse_)
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 import Syntax
 import Type
@@ -174,7 +175,8 @@ genTopLevel = \case
 
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
-        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
+        let ptypes' = map convertType ptypes
+        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
         let fnDecl = rtypeC <> " " <> name <> "(" <> paramsText <> ")"
         outln (fnDecl <> " {")
         flushGen
@@ -191,7 +193,8 @@ genTopLevel = \case
 
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
-        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
+        let ptypes' = map convertType ptypes
+        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
 
         id <- addOperEntry oper_
         let fnDecl = rtypeC <> " _operator" <> fromString (show id) <> "(" <> paramsText <> ")"
@@ -234,9 +237,10 @@ genTopLevel = \case
 
 genTypeVariant :: Builder -> (Name, [Type]) -> Gen ()
 genTypeVariant typeName (conName, conTypes) = do
+    let conTypes' = map convertType conTypes
     let conName' = convertName conName
     let tIds = map (fromString . show) [0..]
-    let conParamList = [convertType conType <> " _" <> tId | (conType, tId) <- zip conTypes tIds]
+    let conParamList = [conType <> " _" <> tId | (conType, tId) <- zip conTypes' tIds]
 
     addTypedef $
         "typedef struct " <> typeName <> conName' <> " {\n"
@@ -253,10 +257,15 @@ genTypeVariant typeName (conName, conTypes) = do
         <> "}\n"
 
     addTypedef $
-        mconcat ["typedef " <> convertType conType <> " " <> conName' <> "_" <> tId <> ";\n" | (conType, tId) <- zip conTypes tIds]
+        mconcat ["typedef " <> conType <> " " <> conName' <> "_" <> tId <> ";\n" | (conType, tId) <- zip conTypes' tIds]
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
+    DVar (TArray t) _ name _ (EArray _ exprs) -> do
+        out (convertType t <> " " <> fromText name <> "[] = {")
+        sequence_ (intersperse (out ", ") (map genExpr exprs))
+        outln "};"
+        flushGen
     DVar t _ name _ expr -> do
         out (convertType t <> " " <> fromText name <> " = ")
         genExpr expr
@@ -378,9 +387,19 @@ genExpr = \case
     ESizeof _ arg -> do
         out "sizeof("
         case arg of
-            Left typ -> out (convertType typ)
+            Left typ -> do
+                out (convertType typ)
             Right expr -> genExpr expr
         out ")"
+    EArray (TArray t) exprs -> do
+        cur <- collectBuffer
+        tvar <- tmpVar
+        out (convertType t <> " " <> tvar <> "[] = ") 
+        out "{"
+        sequence_ (intersperse (out ", ") (map genExpr exprs))
+        outln "};"
+        out (cur <> tvar)
+    EArray _ _ -> throwError "Analyzer error"
 
 genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
 genMatchBranches mvarType rvar mvar [branch] = genMatchBranch mvarType rvar mvar branch
@@ -393,12 +412,14 @@ genMatchBranches _ _ _ _ = return ()
 genMatchBranch :: Type -> Builder -> Builder -> (Pattern, TypedExpr) -> Gen ()
 genMatchBranch _ rvar mvar (PLit lit, bexpr) = do
     outln ("if (" <> mvar <> " == " <> genLit lit <> ") {")
+    flushGen
     out (rvar <> " = ")
     genExpr bexpr
     outln ";"
     out "}"
 genMatchBranch mvarType rvar mvar (PVar var, bexpr) = do
     outln "{"
+    flushGen
     outln (convertType mvarType <> " " <> fromText var <> " = " <> mvar <> ";")
     out (rvar <> " = ")
     genExpr bexpr
@@ -406,6 +427,7 @@ genMatchBranch mvarType rvar mvar (PVar var, bexpr) = do
     out "}"
 genMatchBranch _ rvar mvar (PWild, bexpr) = do
     outln "{"
+    flushGen
     out (rvar <> " = ")
     genExpr bexpr
     outln ";"
@@ -416,6 +438,7 @@ genMatchBranch mvarType rvar mvar (PCon conName binds, bexpr) = do
     let tIds = map (fromString . show) [0..]
     outln ("if (" <> mvar <> ".tag == " <> convertName conName <> "Tag) {")
     out $ mconcat [conName' <> "_" <> tId <> " " <> bind <> " = " <> mvar <> ".data." <> conName' <> "._" <> tId <> ";\n" | (bind, tId) <- zip binds' tIds, bind /= "_"]
+    flushGen
     out (rvar <> " = ")
     genExpr bexpr
     outln ";"
@@ -449,6 +472,15 @@ convertType = \case
     TBool -> "bool"
     TUnit -> "unit"
     TCon name [] -> convertName name
+    a@(TArray t) -> convertType t <> singleton '*'
+        {-
+        tstr <- convertType t
+        return (tstr <> "*")
+        addStaticArrayType a
+        tstr <- convertType t
+        return ("array_" <> tstr <> "_" <> (fromString . show $ l))
+        -}
+
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
 

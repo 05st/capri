@@ -15,7 +15,8 @@ data Type
     | TFunc [Type] Type
     | TVar TVar
     | TPtr Type
-    deriving (Eq)
+    | TArray Type
+    deriving (Eq, Ord)
 
 data Constraint = CEqual Type Type deriving (Show)
 data TypeScheme = Forall [TVar] Type deriving (Show)
@@ -45,3 +46,4 @@ instance Show Type where
         TFunc pts rt -> intercalate ", " (map show pts) ++ " -> " ++ show rt
         TVar (TV var) -> unpack var
         TPtr t -> show t ++ "*"
+        TArray t -> show t ++ "[]"

@@ -98,6 +98,7 @@ resolveExpr = \case
     ERef t expr -> ERef t <$> resolveExpr expr
     ESizeof t (Right expr) -> ESizeof t . Right <$> resolveExpr expr
     e@(ESizeof _ _) -> return e
+    EArray t exprs -> EArray t <$> traverse resolveExpr exprs
 
 resolvePattern :: Pattern -> Resolve Pattern
 resolvePattern = \case

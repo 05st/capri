@@ -159,7 +159,7 @@ expression = do
         postfixOp name f = Postfix (reservedOp name >> return f)
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> closure <|> try assign <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -204,7 +204,7 @@ ref = do
     ERef () <$> value
 
 value :: Parser UntypedExpr
-value = (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal) <|> try variable <|> try block <|> parens expression
+value = array <|> (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal) <|> try variable <|> try block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -232,6 +232,11 @@ block = braces $ do
     result <- option (ELit () LUnit) expression
     return $ EBlock () decls result
 
+array :: Parser UntypedExpr
+array = do
+    exprs <- brackets (sepBy expression comma)
+    return (EArray () exprs)
+
 -- Literals
 literal :: Parser Lit
 literal = try (LFloat <$> signedFloat) <|> (LInt <$> integer)
@@ -244,13 +249,19 @@ integer = try octal <|> try binary <|> try hexadecimal <|> signedInteger
 
 -- Parse types
 type' :: Parser Type
-type' = try typeFunc <|> try typeCon <|> typeBase
+type' = try typeFunc <|> try typeArray <|> try typeCon <|> typeBase
 
 typeFunc :: Parser Type
 typeFunc = do
-    inputTypes <- sepBy typeBase comma
+    inputTypes <- sepBy typeCon comma
     reservedOp "->"
     TFunc inputTypes <$> type'
+
+typeArray :: Parser Type
+typeArray = do
+    t <- typeBase <|> typeCon
+    brackets sc
+    return (TArray t)
 
 typeCon :: Parser Type
 typeCon = do

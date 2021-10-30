@@ -342,6 +342,13 @@ inferExpr = \case
             Right e -> Right . fst <$> inferExpr e
         return (ESizeof TInt32 arg', TInt32)
 
+    EArray _ exprs -> do
+        (exprs', ets) <- unzip <$> traverse inferExpr exprs
+        tv <- fresh
+        sequence_ [constrain (CEqual tv et) | et <- ets]
+        let typ = TArray tv
+        return (EArray typ exprs', typ)
+
 inferLit :: Lit -> Type
 inferLit = \case
     LInt _ -> TInt32
@@ -442,7 +449,8 @@ unify a@(TCon c1 ts1) b@(TCon c2 ts2)
 unify a@(TFunc pts rt) b@(TFunc pts2 rt2)
     | length pts /= length pts2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = unifyMany (rt : pts) (rt2 : pts2)
-unify a@(TPtr t) b@(TPtr t2) = unify t t2
+unify (TPtr t) (TPtr t2) = unify t t2
+unify a@(TArray t) b@(TArray t2) = unify t t2
 unify a b = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
 unifyMany :: [Type] -> [Type] -> Solve Substitution
