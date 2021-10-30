@@ -400,6 +400,9 @@ genExpr = \case
         outln "};"
         out (cur <> tvar)
     EArray _ _ -> throwError "Analyzer error"
+    EIndex t expr idx -> do
+        genExpr expr
+        out ("[" <> (fromString . show $ idx) <> "]")
 
 genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
 genMatchBranches mvarType rvar mvar [branch] = genMatchBranch mvarType rvar mvar branch

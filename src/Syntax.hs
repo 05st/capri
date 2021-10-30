@@ -54,6 +54,7 @@ data Expr a
     | ERef a (Expr a)
     | ESizeof a (Either Type (Expr a))
     | EArray a [Expr a]
+    | EIndex a (Expr a) Int
     deriving (Show, Functor)
 
 data Lit
@@ -102,3 +103,4 @@ typeOfExpr = \case
     ERef t _ -> t
     ESizeof t _ -> t
     EArray t _ -> t
+    EIndex t _ _ -> t

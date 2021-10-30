@@ -32,7 +32,7 @@ options :: Parser Options
 options = Options
     <$> switch (long "dir" <> short 'd' <> help "Input path is to directory")
     <*> strOption (long "backend" <> short 'b' <> value "gcc" <> help "Use specified backend (default gcc)")
-    <*> strOption (long "stl" <> value "" <> metavar "DIR" <> help "Standard library path (blank for no stl)")
+    <*> strOption (long "stl" <> short 's' <> value "" <> metavar "DIR" <> help "Standard library path (blank for no stl)")
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
     <*> strArgument (metavar "PATH" <> help "Source path (directory or file)")
 

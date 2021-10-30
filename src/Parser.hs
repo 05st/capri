@@ -159,7 +159,7 @@ expression = do
         postfixOp name f = Postfix (reservedOp name >> return f)
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try index <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -189,9 +189,15 @@ closure = do
 
 assign :: Parser UntypedExpr
 assign = do
-    var <- deref <|> value 
+    var <- deref <|> try index <|> value 
     reservedOp "="
     EAssign () var <$> expression
+
+index :: Parser UntypedExpr
+index = do
+    expr <- value
+    idx <- brackets decimal
+    return (EIndex () expr (fromIntegral idx))
 
 deref :: Parser UntypedExpr
 deref = do

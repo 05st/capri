@@ -260,6 +260,10 @@ inferExpr = \case
                 isMut <- lookupMut name
                 unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
+            EIndex _ (EVar _ name) idx -> do
+                isMut <- lookupMut name
+                unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
+                return (expr', ltype)
             EDeref _ _ -> return (expr', ltype)
             _ -> throwError "Cannot assign to non-lvalue"
 
@@ -348,6 +352,13 @@ inferExpr = \case
         sequence_ [constrain (CEqual tv et) | et <- ets]
         let typ = TArray tv
         return (EArray typ exprs', typ)
+
+    EIndex _ expr idx -> do
+        (expr', etype) <- inferExpr expr
+        tv <- fresh
+        let typ = TArray tv
+        constrain (CEqual typ etype)
+        return (EIndex tv expr' idx, tv)
 
 inferLit :: Lit -> Type
 inferLit = \case
