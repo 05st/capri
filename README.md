@@ -21,6 +21,8 @@ Takes inspiration from languages such as Rust or Haskell.
 
 ## Example
 ```
+module main;
+
 extern printf(str, i32): unit;
 extern scanf(str, i32*): unit;
 
