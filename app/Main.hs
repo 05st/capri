@@ -22,7 +22,7 @@ import Codegen
 
 data Options = Options
     { dirInput :: Bool
-    , clang :: Bool
+    , clang :: String
     , stlDir :: FilePath
     , outFile :: FilePath
     , inPath :: FilePath
@@ -31,7 +31,7 @@ data Options = Options
 options :: Parser Options
 options = Options
     <$> switch (long "dir" <> short 'd' <> help "Input path is to directory")
-    <*> switch (long "clang" <> help "Use clang backend (default gcc)")
+    <*> strOption (long "backend" <> short 'b' <> value "gcc" <> help "Use specified backend (default gcc)")
     <*> strOption (long "stl" <> value "" <> metavar "DIR" <> help "Standard library path (blank for no stl)")
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
     <*> strArgument (metavar "PATH" <> help "Source path (directory or file)")
@@ -49,7 +49,7 @@ readDir path = do
     return (zip files inputs)
 
 runOpts :: Options -> IO ()
-runOpts (Options dirInput clang stlDir outFile inPath) = do
+runOpts (Options dirInput backend stlDir outFile inPath) = do
     files <- if dirInput then readDir inPath else T.readFile inPath >>= \input -> return [(inPath, input)]
     (stlFiles, noStdLib) <- if null stlDir then return ([], True) else (, False) <$> readDir stlDir
     cOutFile <- emptySystemTempFile "outjuno.c"
@@ -74,6 +74,6 @@ runOpts (Options dirInput clang stlDir outFile inPath) = do
                     end <- getCPUTime
                     printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
 
-                    callProcess (if clang then "clang" else "gcc") [cOutFile, "-o", outFile]
+                    callProcess backend [cOutFile, "-o", outFile]
                 Left err -> putStrLn ("ERROR (ANALYZER): " ++ err)
         Left err -> putStrLn ("ERROR (PARSER): " ++ err)   
