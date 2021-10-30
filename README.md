@@ -13,9 +13,9 @@ Takes inspiration from languages such as Rust or Haskell.
 - Nearly everything is an expression
 - Immutable variables by default
 - Concise syntax
+- Module system
 
 ## Planned
-- Module system
 - Parametric polymorphism
 - Typeclasses
 
