@@ -42,8 +42,10 @@ library
   build-depends:
       base >=4.7 && <5
     , containers
+    , directory
     , megaparsec
     , mtl
+    , optparse-applicative
     , parser-combinators
     , text
   default-language: Haskell2010
@@ -58,9 +60,11 @@ executable juno-exe
   build-depends:
       base >=4.7 && <5
     , containers
+    , directory
     , juno
     , megaparsec
     , mtl
+    , optparse-applicative
     , parser-combinators
     , text
   default-language: Haskell2010
@@ -76,9 +80,11 @@ test-suite juno-test
   build-depends:
       base >=4.7 && <5
     , containers
+    , directory
     , juno
     , megaparsec
     , mtl
+    , optparse-applicative
     , parser-combinators
     , text
   default-language: Haskell2010
