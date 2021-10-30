@@ -1,4 +1,5 @@
 {-# Language OverloadedStrings #-}
+{-# Language TupleSections #-}
 
 module Main where
 
@@ -15,7 +16,7 @@ import Codegen
 
 data Options = Options
     { dirInput :: Bool
-    , noStdLib :: Bool
+    , stlDir :: FilePath
     , outFile :: FilePath
     , inPath :: FilePath
     }
@@ -23,9 +24,9 @@ data Options = Options
 options :: Parser Options
 options = Options
     <$> switch (long "dir" <> short 'd' <> help "Input path is to directory")
-    <*> switch (long "nostl" <> help "No standard library")
-    <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE")
-    <*> strArgument (help "Source path (directory or file)" <> metavar "PATH")
+    <*> strOption (long "stl" <> value "" <> metavar "DIR" <> help "Standard library path (blank for no stl)")
+    <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
+    <*> strArgument (metavar "PATH" <> help "Source path (directory or file)")
 
 main :: IO ()
 main = runOpts =<< execParser (options `withInfo` infoString)
@@ -33,16 +34,17 @@ main = runOpts =<< execParser (options `withInfo` infoString)
         withInfo opts desc = info (helper <*> opts) $ progDesc desc
         infoString = "Juno compiler"
 
+readDir :: FilePath -> IO [(String, T.Text)]
+readDir path = do
+    files <- map (path ++) <$> listDirectory path
+    inputs <- traverse T.readFile files
+    return (zip files inputs)
+
 runOpts :: Options -> IO ()
-runOpts (Options dirInput noStdLib outFile inPath) = do
-    if dirInput
-        then do
-            files <- map (inPath ++) <$> listDirectory inPath
-            inputs <- traverse T.readFile files
-            compile (zip files inputs) outFile noStdLib
-        else do
-            input <- T.readFile inPath
-            compile [(inPath, input)] outFile noStdLib
+runOpts (Options dirInput stlDir outFile inPath) = do
+    files <- if dirInput then readDir inPath else T.readFile inPath >>= \input -> return [(inPath, input)]
+    (stlFiles, noStdLib) <- if null stlDir then return ([], True) else (, False) <$> readDir stlDir
+    compile (stlFiles ++ files) outFile noStdLib
 
 compile :: [(String, T.Text)] -> FilePath -> Bool -> IO ()
 compile inputs output nostl = do

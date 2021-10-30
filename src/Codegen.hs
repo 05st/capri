@@ -444,7 +444,7 @@ convertType = \case
     TFloat32 -> "float"
     TFloat64 -> "double"
     TPtr t -> convertType t <> singleton '*'
-    TStr -> "string"
+    TStr -> "char*" --"string"
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"
