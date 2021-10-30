@@ -49,3 +49,6 @@ For directories, turn on the `-d` (`--dir`) flag: `juno -d path/to/dir/ --stl pa
 To change the output path, use `-o` (`--out`): `juno path/to/file.jn -o path/to/out.c --stl path/to/stl/`\
 \
 Run `juno -h` for more help.
+
+## Documentation
+Visit the [wiki](https://github.com/05st/juno/wiki) for documentation on the language.
