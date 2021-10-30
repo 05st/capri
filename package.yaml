@@ -1,7 +1,7 @@
 name:                juno
 version:             0.1.0.0
 github:              "githubuser/juno"
-license:             BSD3
+license:             MIT
 author:              "Author name here"
 maintainer:          "example@example.com"
 copyright:           "2021 Author name here"
@@ -28,6 +28,8 @@ dependencies:
 - parser-combinators
 - directory
 - optparse-applicative
+- temporary
+- process
 
 library:
   source-dirs: src
