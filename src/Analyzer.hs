@@ -93,7 +93,7 @@ inferModulePre (Module name _ topLvls pubs) = do
     case M.lookup name modPubs of
         Nothing -> do
             toInsert' <- concat <$> traverse generatePubVar topLvls
-            let toInsert = M.fromList $ map (\(n, t) -> (Qualified (name ++ [extractName n]), t)) $ filter (\(n, _) -> extractName n `elem` pubs) toInsert'
+            let toInsert = M.fromList $ filter (\(n, _) -> extractName n `elem` pubs) toInsert'
             state <- get
             put (state { pubsEnv = pubsEnv state `M.union` toInsert, modulePubs = M.insert name pubs (modulePubs state) })
         _ -> throwError ("Already defined module " ++ show name)
@@ -119,8 +119,7 @@ inferModule (Module name imports topLvls pubs) = do
 
     state <- get
     put (state { environment = M.empty
-                , topLvlTmps = M.empty
-                , mainExists = name == ["main"] && mainExists state })
+                , topLvlTmps = M.empty })
     return (Module name imports topLvls' pubs)
 
 insertTmpVars :: UntypedTopLvl -> Infer ()
@@ -162,9 +161,12 @@ inferTopLvl = \case
         alreadyDefined <- exists name
         if alreadyDefined then throwError ("Function '" ++ show name ++ "' already defined")
         else do
-            when (extractName name == "main") (do
-                state <- get
-                put (state { mainExists = True }))
+            case name of
+                Qualified name -> 
+                    when (name == ["main", "main"]) (do
+                        state <- get
+                        put (state { mainExists = True }))
+                _ -> return ()
             (body', typ) <- inferFn name params rtann body
             return (TLFunc typ name params rtann body')
 
@@ -202,6 +204,10 @@ inferFn name params rtann body = do
     let tmpsEnv = topLvlTmps state
     constrain (CEqual typ (fromJust (M.lookup name tmpsEnv)))
     put (state {topLvlTmps = M.delete name tmpsEnv})
+
+    pubsEnv <- gets pubsEnv
+    let lookup = M.lookup name pubsEnv
+    when (isJust lookup) (constrain (CEqual typ (fromJust lookup)))
     
     insertEnv (name, (scheme, False)) -- already scoped by block
     return (body', typ)
