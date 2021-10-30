@@ -10,17 +10,21 @@ import Data.Text (Text)
 
 import OperatorDef
 import Type
+import Name
+
+type Program a = [Module a]
+
+type Import = [Text]
+data Module a = Module [Text] [Import] [TopLvl a] [Text]
+    deriving (Show, Functor)
 
 type TypeAnnot = Maybe Type
 type Params = [(Text, TypeAnnot)]
-
-type Module a = [TopLvl a]
-
 data TopLvl a
-    = TLFunc a Text Params TypeAnnot (Expr a)
-    | TLOper a OperatorDef Text Params TypeAnnot (Expr a)
+    = TLFunc a Name Params TypeAnnot (Expr a)
+    | TLOper a OperatorDef Name Params TypeAnnot (Expr a)
     | TLExtern Text [Type] Type
-    | TLType Text [TVar] [(Text, [Type])]
+    | TLType Name [TVar] [(Name, [Type])]
     deriving (Show, Functor)
 
 data Decl a
@@ -36,13 +40,13 @@ data Stmt a
 
 data Expr a
     = ELit a Lit
-    | EVar a Text
+    | EVar a Name
     | EAssign a (Expr a) (Expr a)
     | EBlock a [Decl a] (Expr a)
     | EIf a (Expr a) (Expr a) (Expr a)
     | EMatch a (Expr a) [(Pattern, Expr a)]
-    | EBinOp a Text (Expr a) (Expr a)
-    | EUnaOp a Text (Expr a)
+    | EBinOp a Name (Expr a) (Expr a)
+    | EUnaOp a Name (Expr a)
     | EClosure a [Text] Params TypeAnnot (Expr a)
     | ECall a (Expr a) [Expr a]
     | ECast a Type (Expr a)
@@ -61,12 +65,14 @@ data Lit
     deriving (Show)
 
 data Pattern
-    = PCon Text [Text]
+    = PCon Name [Text]
     | PLit Lit
     | PVar Text
     | PWild
     deriving (Show)
 
+type UntypedProgram = Program ()
+type TypedProgram = Program Type
 type UntypedModule = Module ()
 type TypedModule = Module Type
 type UntypedTopLvl = TopLvl ()

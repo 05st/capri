@@ -20,27 +20,43 @@ import Lexer
 import Syntax
 import Type
 import OperatorDef
+import Name
 
 -- Module
 parseModule :: Parser UntypedModule
-parseModule = sc *> manyTill topLvlDecl eof
+parseModule = do
+    (opdefs, _) <- S.get
+    S.put (opdefs, [])
+
+    sc
+    name <- reserved "module" *> identifier <* semi
+    imports <- many (reserved "import" *> parseImport <* semi)
+    decls <- manyTill topLvlDecl eof
+
+    pubs <- S.gets snd
+    return (Module [name] imports decls pubs)
+    where
+        parseImport = sepBy1 identifier (reservedOp "::")
 
 -- Top Level Declarations
 topLvlDecl :: Parser UntypedTopLvl
-topLvlDecl = topLvlFuncDecl <|> topLvlOperDecl <|> topLvlExternDecl <|> topLvlTypeDecl
+topLvlDecl = try topLvlFuncDecl <|> try topLvlOperDecl <|> topLvlExternDecl <|> topLvlTypeDecl
 
 topLvlFuncDecl :: Parser UntypedTopLvl
 topLvlFuncDecl = do
+    isPub <- option False (True <$ reserved "pub")
     reserved "fn"
     name <- identifier
     paramsParsed <- params
     retAnnot <- optional typeAnnot
     expr <- expression
     semi
-    return $ TLFunc () name paramsParsed retAnnot expr
+    S.when isPub (addPub name)
+    return $ TLFunc () (Unqualified name) paramsParsed retAnnot expr
 
 topLvlOperDecl :: Parser UntypedTopLvl
 topLvlOperDecl = do
+    isPub <- option False (True <$ reserved "pub")
     reserved "op"
     assocParsed <- assoc
     precedence <- decimal
@@ -49,15 +65,22 @@ topLvlOperDecl = do
     retAnnot <- optional typeAnnot
 
     let opdef = OperatorDef assocParsed precedence oper
-    S.modify (opdef :)
+    (opdefs, pubs) <- S.get
+    S.put (opdef : opdefs, pubs)
 
     expr <- expression
     semi
 
-    return $ TLOper () opdef oper paramsParsed retAnnot expr
+    S.when isPub (addPub oper)
+    return $ TLOper () opdef (Unqualified oper) paramsParsed retAnnot expr
     where
         assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
             <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
+
+addPub :: Text -> Parser ()
+addPub name = do
+    (opdefs, pubs) <- S.get
+    S.put (opdefs, name : pubs)
 
 topLvlExternDecl :: Parser UntypedTopLvl
 topLvlExternDecl = do
@@ -70,18 +93,21 @@ topLvlExternDecl = do
 
 topLvlTypeDecl :: Parser UntypedTopLvl
 topLvlTypeDecl = do
+    isPub <- option False (True <$ reserved "pub")
     reserved "type"
     typeName <- typeIdentifier
     typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
     reservedOp "="
     valueCons <- sepBy1 valueCon (symbol "|")
     semi
-    return (TLType typeName typeParams valueCons)
+
+    S.when isPub (mapM_ (addPub . extractName . fst) valueCons *> addPub typeName)
+    return (TLType (Unqualified typeName) typeParams valueCons)
     where
         valueCon = do
             conName <- typeIdentifier
             types <- option [] (parens (sepBy type' comma))
-            return (conName, types)
+            return (Unqualified conName, types)
 
 -- Declarations
 declaration :: Parser UntypedDecl
@@ -115,17 +141,17 @@ whileStmt = do
 -- Expressions
 expression :: Parser UntypedExpr
 expression = do
-    opers <- S.get
+    opers <- S.gets fst
     let table = mkTable opers
     makeExprParser term table
     where
         mkTable = map (map toParser) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
         toParser (OperatorDef assoc _ oper) = case assoc of
-            ANone -> infixOp oper (EBinOp () oper)
-            ALeft -> infixlOp oper (EBinOp () oper)
-            ARight -> infixrOp oper (EBinOp () oper)
-            APrefix -> prefixOp oper (EUnaOp () oper)
-            APostfix -> postfixOp oper (EUnaOp () oper)
+            ANone -> infixOp oper (EBinOp () . Unqualified $ oper)
+            ALeft -> infixlOp oper (EBinOp () . Unqualified $ oper)
+            ARight -> infixrOp oper (EBinOp () . Unqualified $ oper)
+            APrefix -> prefixOp oper (EUnaOp () . Unqualified $ oper)
+            APostfix -> postfixOp oper (EUnaOp () . Unqualified $ oper)
         infixOp name f = InfixN (reservedOp name >> return f)
         infixlOp name f = InfixL (reservedOp name >> return f)
         infixrOp name f = InfixR (reservedOp name >> return f)
@@ -195,10 +221,10 @@ call :: Parser UntypedExpr
 call = do
     id <- identifier -- TODO
     args <- parens (sepBy expression comma)
-    return $ ECall () (EVar () id) args
+    return $ ECall () (EVar () . Unqualified $ id) args
 
 variable :: Parser UntypedExpr
-variable = EVar () <$> (identifier <|> parens operator)
+variable = EVar () . Unqualified <$> (identifier <|> parens operator)
 
 block :: Parser UntypedExpr
 block = braces $ do
@@ -228,7 +254,7 @@ typeFunc = do
 
 typeCon :: Parser Type
 typeCon = do
-    con <- typeIdentifier
+    con <- Unqualified <$> typeIdentifier
     params <- option [] (angles (sepBy type' comma))
     return (TCon con params)
 
@@ -238,7 +264,7 @@ typeBase = do
     option t (TPtr t <$ symbol "*")
 
 typePrim :: Parser Type
-typePrim = choice $ map (\s -> TCon s [] <$ reserved s)
+typePrim = choice $ map (\s -> TCon (Unqualified s) [] <$ reserved s)
     ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "str", "char", "bool", "unit"]
 
 -- Parse patterns
@@ -249,7 +275,7 @@ patternCon :: Parser Pattern
 patternCon = do
     conName <- typeIdentifier
     binds <- option [] (parens (sepBy (identifier <|> symbol "_") comma))
-    return (PCon conName binds)
+    return (PCon (Unqualified conName) binds)
 
 patternWild :: Parser Pattern
 patternWild = PWild <$ reserved "_"
@@ -268,11 +294,13 @@ params :: Parser [(Text, Maybe Type)]
 params = parens (sepBy ((,) <$> identifier <*> optional typeAnnot) comma)
 
 -- Run parser
-parse :: String -> Text -> Either String UntypedModule
-parse fileName input =
-    case fst $ S.runState (runParserT parseModule fileName input) builtinOpers of
+parse :: [(String, Text)] -> Either String UntypedProgram
+parse files =
+    case sequence (fst $ S.runState (parseProgram files) (builtinOpers, [])) of
         Left err -> Left (errorBundlePretty err)
-        Right mod -> Right mod
+        Right prog -> Right prog
+    where
+        parseProgram = traverse (uncurry (runParserT parseModule))
 
 builtinOpers :: [OperatorDef]
 builtinOpers =

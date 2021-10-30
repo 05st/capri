@@ -1,6 +1,8 @@
+module main;
+
 extern printf(str, i32): unit;
 
-op infixr 10 ** (base, exp) {
+op infixr 10 ** (base: i32, exp: i32) {
     mut res := 1;
     mut exp2 := exp;
     while exp2 > 0 {

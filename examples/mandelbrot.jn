@@ -1,3 +1,5 @@
+module main;
+
 extern putchar(i32): unit;
 extern printf(str, i32): unit;
 extern clock(): i32;

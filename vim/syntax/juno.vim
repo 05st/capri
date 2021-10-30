@@ -1,17 +1,17 @@
 " Vim syntax file
 " Language: Juno
 " Maintainer: 05st
-" Latest Revision: 28 October 2021
+" Latest Revision: 29 October 2021
 
 if exists("b:current_syntax")
     finish
 endif
 
 " Misc Keywords
-syn keyword Keyword import extern infixl infixr infix prefix postfix
+syn keyword Keyword module import extern infixl infixr infix prefix postfix
 
 " Keywords
-syn keyword Keyword fn op type return sizeof
+syn keyword Keyword pub fn op type return sizeof
 syn keyword StorageClass mut
 
 " Conditionals

@@ -12,12 +12,12 @@ import Codegen
 main :: IO ()
 main = do
     args <- getArgs
-    let filePath = head args
-    input <- readFile filePath
+    let filePaths = init args
+    inputs <- traverse readFile filePaths
     let output = last args
-    case parse filePath (T.pack input) of
-        Right decls ->
-            case analyze decls of
+    case parse (zip filePaths (map T.pack inputs)) of
+        Right prog ->
+            case analyze prog of
                 Right annotated -> do
                     generate output annotated
                 Left err -> putStrLn ("ERROR (ANALYZER): " ++ err)

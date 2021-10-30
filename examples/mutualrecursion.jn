@@ -1,3 +1,5 @@
+module main;
+
 extern printf(str, bool): unit;
 
 fn even(n)

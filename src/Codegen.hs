@@ -11,6 +11,7 @@ import Control.Monad.Except
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text.Lazy.IO as TIO
 import Data.Text.Lazy.Builder
+import Data.Text.Lazy (toStrict)
 import Data.List
 import Data.Foldable (traverse_)
 import Data.Maybe
@@ -18,6 +19,7 @@ import qualified Data.Map as M
 
 import Syntax
 import Type
+import Name
 
 type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
@@ -27,12 +29,12 @@ data GenState = GenState
     , forwardDecls :: Builder
     , program :: Builder
     , genBuffer :: Builder
-    , operMap :: M.Map Text Int
+    , operMap :: M.Map Name Int
     , operCount :: Int
     } deriving (Show)
 
-generate :: FilePath -> TypedModule -> IO ()
-generate file mod =
+generate :: FilePath -> TypedProgram -> IO ()
+generate file prog =
     let defaultState = GenState
             { tmpVarCount = 0
             , typedefs = mempty
@@ -43,7 +45,7 @@ generate file mod =
             , operMap = M.empty
             , operCount = 0 
             } in
-    case runWriter (runStateT (runExceptT (runGen mod)) defaultState) of
+    case runWriter (runStateT (runExceptT (runGen prog)) defaultState) of
         ((Left err, _), _) -> print err
         (_, out) -> TIO.writeFile file (toLazyText out)
 
@@ -97,7 +99,7 @@ addForwardDecl txt = do
     let curr = forwardDecls state
     put (state { forwardDecls = curr <> txt <> "\n" })
 
-addOperEntry :: Text -> Gen Int
+addOperEntry :: Name -> Gen Int
 addOperEntry oper = do
     id <- operId
     state <- get
@@ -118,9 +120,9 @@ addValueCon txt = do
     put (state { valueCons = curr <> txt })
 
 -- Code generation
-runGen :: TypedModule -> Gen ()
-runGen decls = do
-    genTopLevelDecls decls
+runGen :: TypedProgram -> Gen ()
+runGen mods = do
+    traverse_ genModule mods
     flushGen
 
     tell "// Juno compiler output\n"
@@ -152,21 +154,24 @@ runGen decls = do
     tell "\n"
     tell "// entry point\n"
     tell "int main() {\n"
-    tell "\t_main();\n"
+    tell "\tmain__main();\n"
     tell "\treturn 0;\n"
     tell "}"
 
-genTopLevelDecls :: TypedModule -> Gen ()
-genTopLevelDecls = foldr ((*>) . genTopLevel) (return ())
+genModule :: TypedModule -> Gen ()
+genModule (Module name _ topLvls _) = do
+    outln ("// " <> convertName (Qualified name))
+    foldr ((*>) . genTopLevel) (return ()) topLvls
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
     TLFunc (TFunc ptypes rtype) name_ params _ body -> do
-        let name = if name_ == "main" then "_main" else name_
+        let name = convertName name_
+
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
         let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
-        let fnDecl = rtypeC <> " " <> fromText name <> "(" <> paramsText <> ")"
+        let fnDecl = rtypeC <> " " <> name <> "(" <> paramsText <> ")"
         outln (fnDecl <> " {")
         flushGen
         out "return "
@@ -177,12 +182,14 @@ genTopLevel = \case
 
         addForwardDecl (fnDecl <> ";")
 
-    TLOper (TFunc ptypes rtype) opdef oper params _ body -> do
+    TLOper (TFunc ptypes rtype) opdef oper_ params _ body -> do
+        let oper = convertName oper_
+
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
         let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames (map convertType ptypes)])
 
-        id <- addOperEntry oper
+        id <- addOperEntry oper_
         let fnDecl = rtypeC <> " _operator" <> fromString (show id) <> "(" <> paramsText <> ")"
 
         outln (fnDecl <> " {")
@@ -196,15 +203,15 @@ genTopLevel = \case
         addForwardDecl (fnDecl <> ";")
 
     TLType typeName tparams_ valueCons -> do
-        let typeName' = fromText typeName
+        let typeName' = convertName typeName
         let (conNames, conTypes) = unzip valueCons
-        let conNames' = map fromText conNames
+        let conNames' = map convertName conNames
 
         traverse_ (genTypeVariant typeName') valueCons
 
         addTypedef $
             "typedef union " <> typeName' <> "Variants {\n"
-            <> (if length conNames' == 0 then "\tchar dummy;\n" else "")
+            <> (if null conNames' then "\tchar dummy;\n" else "")
             <> mconcat ["\t" <> typeName' <> conName <> " " <> conName <> ";\n" | conName <- conNames']
             <> "} " <> typeName' <> "Variants;\n"
 
@@ -221,15 +228,15 @@ genTopLevel = \case
 
     _ -> return ()
 
-genTypeVariant :: Builder -> (Text, [Type]) -> Gen ()
+genTypeVariant :: Builder -> (Name, [Type]) -> Gen ()
 genTypeVariant typeName (conName, conTypes) = do
-    let conName' = fromText conName
+    let conName' = convertName conName
     let tIds = map (fromString . show) [0..]
     let conParamList = [convertType conType <> " _" <> tId | (conType, tId) <- zip conTypes tIds]
 
     addTypedef $
         "typedef struct " <> typeName <> conName' <> " {\n"
-        <> (if length conTypes == 0 then "\tchar dummy;\n" else "")
+        <> (if null conTypes then "\tchar dummy;\n" else "")
         <> mconcat (map (\p -> "\t" <> p <> ";\n") conParamList)
         <> "} " <> typeName <> conName' <> ";\n"
 
@@ -277,7 +284,7 @@ genStmt = \case
 genExpr :: TypedExpr -> Gen ()
 genExpr = \case
     ELit _ lit -> out (genLit lit)
-    EVar _ name -> out (fromText name)
+    EVar _ name -> out (convertName name)
     EAssign _ l r -> do
         genExpr l
         out " = "
@@ -330,10 +337,10 @@ genExpr = \case
         outln ""
         out (cur <> rvar)
     EBinOp _ oper a b -> do
-        if oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
+        if extractName oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
             then do
                 genExpr a
-                out (fromText oper)
+                out (fromText $ extractName oper)
                 genExpr b
             else do
                 map <- gets operMap
@@ -400,10 +407,10 @@ genMatchBranch _ rvar mvar (PWild, bexpr) = do
     outln ";"
     out "}"
 genMatchBranch mvarType rvar mvar (PCon conName binds, bexpr) = do
-    let conName' = fromText conName
+    let conName' = convertName conName
     let binds' = map fromText binds
     let tIds = map (fromString . show) [0..]
-    outln ("if (" <> mvar <> ".tag == " <> fromText conName <> "Tag) {")
+    outln ("if (" <> mvar <> ".tag == " <> convertName conName <> "Tag) {")
     out $ mconcat [conName' <> "_" <> tId <> " " <> bind <> " = " <> mvar <> ".data." <> conName' <> "._" <> tId <> ";\n" | (bind, tId) <- zip binds' tIds, bind /= "_"]
     out (rvar <> " = ")
     genExpr bexpr
@@ -437,9 +444,14 @@ convertType = \case
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"
-    TCon name [] -> fromText name
+    TCon name [] -> convertName name
     TVar _ -> error "Parametric polymorphism not supported yet"
     other -> error (show other)
+
+-- Qualified/Unqualified names to builder
+convertName :: Name -> Builder
+convertName (Qualified quals) = fromString (intercalate "__" (map unpack quals))
+convertName (Unqualified name) = fromText name
 
 -- Utility
 takeWhileOneMore :: (a -> Bool) -> [a] -> [a]

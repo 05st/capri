@@ -14,11 +14,11 @@ import qualified Text.Megaparsec.Char.Lexer as L
 
 import OperatorDef
 
-type Parser = ParsecT Void Text (S.State [OperatorDef])
+type Parser = ParsecT Void Text (S.State ([OperatorDef], [Text]))
 
 reservedNames :: [Text]
 reservedNames =
-    ["fn", "mut", "if", "else", "match", "while", "op", "sizeof", "return", "extern", "type",
+    ["fn", "mut", "if", "else", "match", "while", "op", "sizeof", "return", "extern", "type", "module", "import", "pub",
      "infixl", "infixr", "infix", "prefix", "postfix",
      "i8", "i16", "i32", "i64",
      "u8", "u16", "u32", "u64",
@@ -28,7 +28,7 @@ reservedNames =
      "_"]
 
 reservedOpNames :: [Text]
-reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<="]
+reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<=", "::"]
 
 sc :: Parser ()
 sc = L.space space1 (L.skipLineComment "//") (L.skipBlockComment "/*" "*/")

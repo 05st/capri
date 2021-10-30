@@ -8,6 +8,7 @@ import Data.Text (Text, pack, unpack)
 import Data.Maybe
 import Data.Functor.Identity
 import Data.Foldable (traverse_)
+import Data.Bifunctor
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.RWS
@@ -18,19 +19,24 @@ import Debug.Trace
 import Syntax
 import Type
 import Substitution
+import Name
 
-type AEnv = M.Map Text (TypeScheme, Bool)
-type Infer = RWST () [Constraint] InferState (Except String)
+import Resolver
+
+type AEnv = M.Map Name (TypeScheme, Bool)
+type Infer = RWST [Import] [Constraint] InferState (Except String)
 
 data InferState = InferState
     { environment :: AEnv
     , freshCount :: Int
-    , topLvlTmps :: M.Map Text Type
+    , topLvlTmps :: M.Map Name Type
     , mainExists :: Bool
+    , modulePubs :: M.Map [Text] [Text]
+    , pubsEnv :: M.Map Name Type
     } deriving (Show)
 
-analyze :: UntypedModule -> Either String TypedModule
-analyze = runInfer
+analyze :: UntypedProgram -> Either String TypedProgram 
+analyze = runInfer . resolve
 
 -- Type Inference
 constrain :: Constraint -> Infer ()
@@ -55,23 +61,71 @@ instantiate (Forall vs t) = do
     let sub = M.fromList (zip vs nvs)
     return (apply sub t)
 
-runInfer :: UntypedModule -> Either String TypedModule
-runInfer mod =
-    let defaultState = InferState { environment = M.empty, freshCount = 0, topLvlTmps = M.empty, mainExists = False } in
-    case runIdentity $ runExceptT $ runRWST (inferModule mod) () defaultState of
+runInfer :: UntypedProgram -> Either String TypedProgram
+runInfer prog =
+    let defaultState = InferState
+            { environment = M.empty
+            , freshCount = 0
+            , topLvlTmps = M.empty
+            , mainExists = False
+            , modulePubs = M.empty
+            , pubsEnv = M.empty
+            } in
+    case runIdentity $ runExceptT $ runRWST (inferProgram prog) [] defaultState of
         Left err -> Left err
-        Right (mod', _, consts) -> do
+        Right (prog', _, consts) -> do
             sub <- runSolve consts
-            return $ fmap (fmap $ apply sub) mod'
+            return $ fmap (fmap $ apply sub) prog'
+
+inferProgram :: UntypedProgram -> Infer TypedProgram
+inferProgram mods = do
+    traverse_ inferModulePre mods
+    mods' <- traverse inferModule mods
+    mainExistsCurr <- gets mainExists
+    if mainExistsCurr
+        then return mods'
+        else throwError "No 'main' function found in a top module called 'main'"
+
+inferModulePre :: UntypedModule -> Infer ()
+inferModulePre (Module name _ topLvls pubs) = do
+    modPubs <- gets modulePubs
+
+    case M.lookup name modPubs of
+        Nothing -> do
+            toInsert' <- concat <$> traverse generatePubVar topLvls
+            let toInsert = M.fromList $ map (\(n, t) -> (Qualified (name ++ [extractName n]), t)) $ filter (\(n, _) -> extractName n `elem` pubs) toInsert'
+            state <- get
+            put (state { pubsEnv = pubsEnv state `M.union` toInsert, modulePubs = M.insert name pubs (modulePubs state) })
+        _ -> throwError ("Already defined module " ++ show name)
+
+generatePubVar :: UntypedTopLvl -> Infer [(Name, Type)]
+generatePubVar = \case
+    TLFunc _ name _ _ _ -> do
+        var <- fresh
+        return [(name, var)]
+    TLOper _ _ oper _ _ _ -> do
+        var <- fresh
+        return [(oper, var)]
+    TLExtern {} -> return []
+    TLType _ _ cons -> do
+        let (conNames, _) = unzip cons
+        vars <- traverse (const fresh) conNames
+        return (zip conNames vars)
 
 inferModule :: UntypedModule -> Infer TypedModule
-inferModule topLvls = do
+inferModule (Module name imports topLvls pubs) = do
     traverse_ insertTmpVars topLvls
-    traverse inferTopLvl topLvls
+    topLvls' <- local (const imports) (traverse inferTopLvl topLvls)
+
+    state <- get
+    put (state { environment = M.empty
+                , topLvlTmps = M.empty
+                , mainExists = name == ["main"] && mainExists state })
+    return (Module name imports topLvls' pubs)
 
 insertTmpVars :: UntypedTopLvl -> Infer ()
 insertTmpVars = \case
-    TLFunc _ name _ _ _-> do
+    TLFunc _ name _ _ _ -> do
         var <- fresh
         state <- get
         put (state { topLvlTmps = M.insert name var (topLvlTmps state) })
@@ -83,9 +137,9 @@ insertTmpVars = \case
 
     TLType typeName typeParams cons -> insertValueCons typeName typeParams cons
 
-    TLExtern name ptypes rtype -> insertEnv (name, (Forall [] $ TFunc ptypes rtype, False))
+    TLExtern name ptypes rtype -> insertEnv (Unqualified name, (Forall [] $ TFunc ptypes rtype, False))
 
-insertValueCons :: Text -> [TVar] -> [(Text, [Type])] -> Infer ()
+insertValueCons :: Name -> [TVar] -> [(Name, [Type])] -> Infer ()
 insertValueCons _ _ [] = return ()
 insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
     let typeParams' = map TVar typeParams
@@ -96,18 +150,19 @@ insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
     if (varsTypeParams `S.intersection` varsCon) /= varsCon
         then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
              in throwError ("Undefined type variables " ++ show undefineds)
-        else let scheme = case conTypes of
-                    [] -> Forall [] (TCon typeName typeParams') -- generalize env (TParam typeNam)
-                    _ -> Forall [] (TFunc conTypes (TCon typeName typeParams')) --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
+        else let typ = case conTypes of
+                    [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
+                    _ -> TFunc conTypes (TCon typeName typeParams') --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
+                 scheme = Forall [] typ
              in insertEnv (conName, (scheme, False)) *> insertValueCons typeName typeParams restCons
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
     TLFunc _ name params rtann body -> do
         alreadyDefined <- exists name
-        if alreadyDefined then throwError ("Function '" ++ unpack name ++ "' already defined")
+        if alreadyDefined then throwError ("Function '" ++ show name ++ "' already defined")
         else do
-            when (name == "main") (do
+            when (extractName name == "main") (do
                 state <- get
                 put (state { mainExists = True }))
             (body', typ) <- inferFn name params rtann body
@@ -115,7 +170,7 @@ inferTopLvl = \case
 
     TLOper _ opdef oper params rtann body -> do
         alreadyDefined <- exists oper
-        if alreadyDefined then throwError ("Operator '" ++ unpack oper ++ "' already defined")
+        if alreadyDefined then throwError ("Operator '" ++ show oper ++ "' already defined")
         else do
             (body', typ) <- inferFn oper params rtann body
             return (TLOper typ opdef oper params rtann body')
@@ -123,12 +178,12 @@ inferTopLvl = \case
     TLType typeName typeParams cons -> return (TLType typeName typeParams cons)
     TLExtern name ptypes rtype -> return (TLExtern name ptypes rtype)
 
-inferFn :: Text -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
+inferFn :: Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
 inferFn name params rtann body = do
     let (pnames, panns) = unzip params
     ptypes <- traverse (const fresh) params
     let ptypesSchemes = map ((, False) . Forall []) ptypes
-    let nenv = M.fromList (zip pnames ptypesSchemes)
+    let nenv = M.fromList (zip (map Unqualified pnames) ptypesSchemes)
     ((body', rtype), consts) <- listen (scoped (`M.union` nenv) (inferExpr body))
 
     subst <- liftEither (runSolve consts)
@@ -145,6 +200,7 @@ inferFn name params rtann body = do
 
     state <- get
     let tmpsEnv = topLvlTmps state
+    constrain (CEqual typ (fromJust (M.lookup name tmpsEnv)))
     put (state {topLvlTmps = M.delete name tmpsEnv})
     
     insertEnv (name, (scheme, False)) -- already scoped by block
@@ -153,7 +209,7 @@ inferFn name params rtann body = do
 inferDecl :: UntypedDecl -> Infer TypedDecl
 inferDecl = \case
     DVar _ isMut name tann expr -> do
-        alreadyDefined <- exists name 
+        alreadyDefined <- exists (Unqualified name)
         if alreadyDefined then throwError ("Variable '" ++ unpack name ++ "' already defined")
         else do
             ((expr', etype), consts) <- listen (inferExpr expr)
@@ -162,7 +218,7 @@ inferDecl = \case
             let typ = apply subst etype
                 scheme = Forall [] typ -- TODO: generalize
             when (isJust tann) (constrain $ CEqual typ (fromJust tann))
-            insertEnv (name, (scheme, isMut))
+            insertEnv (Unqualified name, (scheme, isMut))
             return (DVar typ isMut name tann expr')
     DStmt s -> DStmt <$> inferStmt s
 
@@ -184,7 +240,9 @@ inferExpr :: UntypedExpr -> Infer (TypedExpr, Type)
 inferExpr = \case
     ELit _ lit -> let typ = inferLit lit in return (ELit typ lit, typ)
 
-    EVar _ name -> lookupType name >>= \typ -> return (EVar typ name, typ)
+    EVar _ name -> do
+        (typ, newName) <- lookupType name
+        return (EVar typ newName, typ)
 
     EAssign _ l r -> do
         (l', ltype) <- inferExpr l
@@ -194,7 +252,7 @@ inferExpr = \case
         case l' of
             EVar _ name -> do
                 isMut <- lookupMut name
-                unless isMut (throwError $ "Cannot assign to immutable variable " ++ unpack name)
+                unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
             EDeref _ _ -> return (expr', ltype)
             _ -> throwError "Cannot assign to non-lvalue"
@@ -225,23 +283,23 @@ inferExpr = \case
         (a', at) <- inferExpr a
         (b', bt) <- inferExpr b
         case oper of
-            _ | oper `elem` ["+", "-", "*", "/"] -> do -- TODO
+            _ | extractName oper `elem` ["+", "-", "*", "/"] -> do -- TODO
                 return (EBinOp at oper a' b', at)
-            _ | oper `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
+            _ | extractName oper `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
                 return (EBinOp TBool oper a' b', TBool)
-            _ | oper `elem` ["||", "&&"] -> do
+            _ | extractName oper `elem` ["||", "&&"] -> do
                 constrain (CEqual at TBool)
                 constrain (CEqual bt TBool)
                 return (EBinOp TBool oper a' b', TBool)
             _ -> do
-                opt <- lookupType oper
+                (opt, newName) <- lookupType oper
                 rt <- fresh
                 let ft = TFunc [at, bt] rt
                 constrain (CEqual opt ft)
-                return (EBinOp rt oper a' b', rt)
+                return (EBinOp rt newName a' b', rt)
 
     EUnaOp _ oper expr -> do
-        opt <- lookupType oper
+        (opt, newName) <- lookupType oper
         (a', at) <- inferExpr expr
         rt <- fresh
         constrain (CEqual opt (TFunc [at] rt))
@@ -295,18 +353,18 @@ inferBranch mt (pat, expr) = do
     (expr', et) <- scoped (M.fromList vars' `M.union`) (inferExpr expr)
     return ((pat, expr'), et)
 
-inferPattern :: Pattern -> Infer (Type, [(Text, TypeScheme)])
+inferPattern :: Pattern -> Infer (Type, [(Name, TypeScheme)])
 inferPattern (PVar name) = do
     ptype <- fresh
-    pure (ptype, [(name, Forall [] ptype)])
+    pure (ptype, [(Unqualified name, Forall [] ptype)])
 inferPattern (PLit lit) = return (inferLit lit, [])
 inferPattern PWild = do
     ptype <- fresh
     return (ptype, [])
 inferPattern (PCon conName binds) = do
     ptypes <- traverse (const fresh) binds
-    let res = [(bind, Forall [] ptype) | (bind, ptype) <- zip binds ptypes]
-    conType <- lookupType conName
+    let res = [(Unqualified bind, Forall [] ptype) | (bind, ptype) <- zip binds ptypes]
+    (conType, _) <- lookupType conName
     t <- fresh
     let conType' = case binds of
             [] -> t
@@ -325,29 +383,41 @@ scoped fn m = do
     put (state' { environment = env })
     return res
 
-insertEnv :: (Text, (TypeScheme, Bool)) -> Infer ()
+insertEnv :: (Name, (TypeScheme, Bool)) -> Infer ()
 insertEnv (name, info) = do
     state <- get
     put (state { environment = M.insert name info (environment state) })
 
-lookupVar :: Text -> Infer (TypeScheme, Bool)
+lookupVar :: Name -> Infer ((Type, Name), Bool)
 lookupVar name = do
     env <- gets environment
     case M.lookup name env of
-        Just v -> return v
-        Nothing -> do -- check temp env for top levels
-            tmpsEnv <- gets topLvlTmps
-            case M.lookup name tmpsEnv of
-                Just v -> return (Forall [] v, False)
-                Nothing -> throwError ("Unknown variable " ++ unpack name)
+        Just (ts, m) -> (\t -> ((t, name), m)) <$> instantiate ts
+        Nothing -> case M.lookup (Unqualified (extractName name)) env of 
+            Just (ts, m) ->  (\t -> ((t, Unqualified (extractName name)), m)) <$> instantiate ts
+            Nothing -> do -- check temp env for top levels
+                tmpsEnv <- gets topLvlTmps
+                case M.lookup name tmpsEnv of
+                    Just v -> return ((v, name), False)
+                    Nothing -> ask >>= checkImports name
 
-lookupType :: Text -> Infer Type
-lookupType name = lookupVar name >>= instantiate . fst
+checkImports :: Name -> [Import] -> Infer ((Type, Name), Bool)
+checkImports name [] = throwError ("Unknown identifier " ++ show name)
+checkImports name (imp : imps) = do
+    moduleMap <- gets modulePubs
+    pubsTypes <- gets pubsEnv
+    let pubs = fromMaybe [] (M.lookup imp moduleMap)
+    if extractName name `elem` pubs
+        then let newName = Qualified (imp ++ [extractName name]) in return ((fromJust (M.lookup newName pubsTypes), newName), False)
+        else checkImports name imps
 
-lookupMut :: Text -> Infer Bool
+lookupType :: Name -> Infer (Type, Name)
+lookupType name = fst <$> lookupVar name
+
+lookupMut :: Name -> Infer Bool
 lookupMut name = snd <$> lookupVar name
 
-exists :: Text -> Infer Bool
+exists :: Name -> Infer Bool
 exists name = isJust . M.lookup name <$> gets environment -- Doesn't check temp env for top levels
 
 -- Unification

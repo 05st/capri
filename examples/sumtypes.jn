@@ -1,9 +1,11 @@
+module main;
+
 extern printf(str, i32): unit;
 
 type IntOrBool = Int(i32) | Bool(bool);
 
 fn main() {
-    xyz: IntOrBool := Int(420);
+    xyz := Int(420);
     test := match xyz {
         Bool(_) => 0,
         Int(n) => n
