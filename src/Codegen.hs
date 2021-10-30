@@ -31,10 +31,11 @@ data GenState = GenState
     , genBuffer :: Builder
     , operMap :: M.Map Name Int
     , operCount :: Int
+    , noStdLib :: Bool
     } deriving (Show)
 
-generate :: FilePath -> TypedProgram -> IO ()
-generate file prog =
+generate :: FilePath -> TypedProgram -> Bool -> IO ()
+generate file prog nostl =
     let defaultState = GenState
             { tmpVarCount = 0
             , typedefs = mempty
@@ -44,6 +45,7 @@ generate file prog =
             , genBuffer = mempty
             , operMap = M.empty
             , operCount = 0 
+            , noStdLib = nostl
             } in
     case runWriter (runStateT (runExceptT (runGen prog)) defaultState) of
         ((Left err, _), _) -> print err
@@ -127,14 +129,16 @@ runGen mods = do
 
     tell "// Juno compiler output\n"
     tell "\n"
-    tell "// includes\n"
-    tell "#include <stdlib.h>\n"
-    tell "#include <stdio.h>\n"
-    tell "#include <stdint.h>\n"
-    tell "#include <stdbool.h>\n"
-    tell "#include <math.h>\n"
-    tell "#include <time.h>\n"
-    tell "\n"
+    nostl <- gets noStdLib
+    unless nostl (do
+        tell "// includes\n"
+        tell "#include <stdlib.h>\n"
+        tell "#include <stdio.h>\n"
+        tell "#include <stdint.h>\n"
+        tell "#include <stdbool.h>\n"
+        tell "#include <math.h>\n"
+        tell "#include <time.h>\n"
+        tell "\n")
     tell "// typedefs\n"
     tell "typedef char unit;\n"
     tell "typedef struct string {\n"
