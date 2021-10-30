@@ -1,5 +1,6 @@
 {-# Language OverloadedStrings #-}
 {-# Language TupleSections #-}
+{-# Language BangPatterns #-}
 
 module Main where
 
@@ -10,6 +11,7 @@ import System.Environment
 import System.Directory
 import System.CPUTime
 
+import Control.Monad
 import Options.Applicative
 
 import Parser
@@ -52,22 +54,22 @@ compile :: [(String, T.Text)] -> FilePath -> Bool -> IO ()
 compile inputs output nostl = do
     putStr "Parsing..."
     start <- getCPUTime
-    let parseRes = parse inputs
+    let !parseRes = parse inputs
     end <- getCPUTime
-    printf " (%0.3f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
+    printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
     case parseRes of
         Right prog -> do
             putStr "Analyzing..."
             start <- getCPUTime
-            let analyzeRes = analyze prog
+            let !analyzeRes = analyze prog
             end <- getCPUTime
-            printf " (%0.3f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
+            printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
             case analyze prog of
                 Right annotated -> do
                     putStr "Generating..."
                     start <- getCPUTime
                     generate output annotated nostl
                     end <- getCPUTime
-                    printf " (%0.3f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
+                    printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
                 Left err -> putStrLn ("ERROR (ANALYZER): " ++ err)
         Left err -> putStrLn ("ERROR (PARSER): " ++ err)
