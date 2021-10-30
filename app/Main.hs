@@ -3,10 +3,12 @@
 
 module Main where
 
+import Text.Printf
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import System.Environment
 import System.Directory
+import System.CPUTime
 
 import Options.Applicative
 
@@ -48,10 +50,24 @@ runOpts (Options dirInput stlDir outFile inPath) = do
 
 compile :: [(String, T.Text)] -> FilePath -> Bool -> IO ()
 compile inputs output nostl = do
-    case parse inputs of
-        Right prog ->
+    putStr "Parsing..."
+    start <- getCPUTime
+    let parseRes = parse inputs
+    end <- getCPUTime
+    printf " (%0.3f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
+    case parseRes of
+        Right prog -> do
+            putStr "Analyzing..."
+            start <- getCPUTime
+            let analyzeRes = analyze prog
+            end <- getCPUTime
+            printf " (%0.3f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
             case analyze prog of
                 Right annotated -> do
+                    putStr "Generating..."
+                    start <- getCPUTime
                     generate output annotated nostl
+                    end <- getCPUTime
+                    printf " (%0.3f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
                 Left err -> putStrLn ("ERROR (ANALYZER): " ++ err)
         Left err -> putStrLn ("ERROR (PARSER): " ++ err)
