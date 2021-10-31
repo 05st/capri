@@ -12,7 +12,7 @@ import Data.Text (Text, pack, unpack)
 import qualified Data.Text.Lazy.IO as TIO
 import Data.Text.Lazy.Builder
 import Data.Text.Lazy (toStrict)
-import Data.List
+import Data.List (intersperse, intercalate)
 import Data.Foldable (traverse_)
 import Data.Maybe
 import qualified Data.Map as M
