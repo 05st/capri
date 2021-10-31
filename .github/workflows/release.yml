@@ -57,7 +57,7 @@ jobs:
       - name: Compress Binary
         id: compress_binary
         run: |
-          JUNO_BUILD=$(find dist-newstyle \( -name 'juno' -o -name 'juno.exe' \) -type f)
+          JUNO_BUILD=$(find dist-newstyle \( -name 'juno-exe' -o -name 'juno-exe.exe' \) -type f)
           JUNO=juno-${{env.GHC_VERSION}}
           mv $JUNO_BUILD $JUNO${{env.EXE_EXT}}
           if [[ "$OSTYPE" == "msys" ]]; then
