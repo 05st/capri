@@ -141,19 +141,26 @@ insertTmpVars = \case
 insertValueCons :: Name -> [TVar] -> [(Name, [Type])] -> Infer ()
 insertValueCons _ _ [] = return ()
 insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
-    let typeParams' = map TVar typeParams
-    let varsTypeParams = tvs typeParams'
-    let varsCon = tvs conTypes
+    if any (checkInfiniteType typeName) conTypes
+        then throwError $ "Infinite type " ++ show typeName ++ " (con. " ++ show conName ++ ")"
+        else do
+            let typeParams' = map TVar typeParams
+            let varsTypeParams = tvs typeParams'
+            let varsCon = tvs conTypes
 
-    env <- gets environment
-    if (varsTypeParams `S.intersection` varsCon) /= varsCon
-        then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
-             in throwError ("Undefined type variables " ++ show undefineds)
-        else let typ = case conTypes of
-                    [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
-                    _ -> TFunc conTypes (TCon typeName typeParams') --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
-                 scheme = Forall [] typ
-             in insertEnv (conName, (scheme, False)) *> insertValueCons typeName typeParams restCons
+            env <- gets environment
+            if (varsTypeParams `S.intersection` varsCon) /= varsCon
+                then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
+                     in throwError ("Undefined type variables " ++ show undefineds)
+                else let typ = case conTypes of
+                            [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
+                            _ -> TFunc conTypes (TCon typeName typeParams') --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
+                         scheme = Forall [] typ
+                     in insertEnv (conName, (scheme, False)) *> insertValueCons typeName typeParams restCons
+    where
+        checkInfiniteType typeName (TCon name _) = name == typeName
+        checkInfiniteType typeName (TArray t) = checkInfiniteType typeName t
+        checkInfiniteType _ _ = False
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case

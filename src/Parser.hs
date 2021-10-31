@@ -265,7 +265,7 @@ typeFunc = do
 
 typeArray :: Parser Type
 typeArray = do
-    t <- typeBase <|> typeCon
+    t <- try typeCon <|> typeBase
     brackets sc
     return (TArray t)
 
@@ -273,11 +273,12 @@ typeCon :: Parser Type
 typeCon = do
     con <- Unqualified <$> typeIdentifier
     params <- option [] (angles (sepBy type' comma))
-    return (TCon con params)
+    let t = TCon con params
+    option t (TPtr t <$ symbol "*")
 
 typeBase :: Parser Type
 typeBase = do
-    t <- typePrim {-<|> (TVar . TV <$> identifier)-} <|> parens type'
+    t <- typePrim <|> (TVar . TV <$> identifier) <|> parens type'
     option t (TPtr t <$ symbol "*")
 
 typePrim :: Parser Type

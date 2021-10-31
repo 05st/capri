@@ -172,19 +172,21 @@ runGen mods = do
         tell "#include <math.h>\n"
         tell "#include <time.h>\n"
         tell "\n")
-    tell "// typedefs\n"
+    tell "// compiler typedefs\n"
     tell "typedef char unit;\n"
     tell "typedef struct string {\n"
     tell "\tchar* data;\n"
     tell "\tint len;\n"
     tell "} string;\n"
+    tell "\n"
+    tell "// forward decls\n"
+    gets forwardDecls >>= tell
+    tell "\n"
+    tell "// typedefs\n"
     gets typedefs >>= tell
     tell "\n"
     tell "// value constructors\n"
     gets valueCons >>= tell
-    tell "\n"
-    tell "// forward decls\n"
-    gets forwardDecls >>= tell
     tell "\n"
     tell "// macros\n"
     gets macros >>= tell
@@ -260,7 +262,7 @@ genTopLevel = \case
         addForwardDecl (fnDecl <> ";")
 
     TLType typeName tparams_ valueCons -> do
-        let typeName' = convertName typeName
+        let typeName' = "_type_" <> convertName typeName
         let (conNames, conTypes) = unzip valueCons
         let conNames' = map convertName conNames
 
@@ -282,6 +284,8 @@ genTopLevel = \case
             <> "\t" <> typeName' <> "Tag tag;\n"
             <> "\t" <> typeName' <> "Variants data;\n"
             <> "} " <> typeName' <> ";\n"
+
+        addForwardDecl ("typedef struct " <> typeName' <> " " <> typeName' <> ";")
 
     _ -> return ()
 
@@ -532,7 +536,7 @@ convertType = \case
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"
-    TCon name [] -> convertName name
+    TCon name [] -> "_type_" <> convertName name
     a@(TArray t) -> convertType t <> singleton '*'
         {-
         tstr <- convertType t

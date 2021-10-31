@@ -7,6 +7,8 @@ import Control.Monad.Reader
 
 import Syntax
 import Name
+import Type
+import Lexer
 
 type Resolve = Reader [Text]
 
@@ -24,19 +26,19 @@ resolveModule (Module name imports topLvls pubs) = do
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
     TLFunc t name params tann body -> do
-        mod <- ask
+        name' <- fixName name
         body' <- resolveExpr body
-        return (TLFunc t (Qualified (mod ++ [extractName name])) params tann body')
+        return (TLFunc t name' params tann body')
     TLOper t opdef name params tann body -> do
-        mod <- ask
+        name' <- fixName name
         body' <- resolveExpr body
-        return (TLOper t opdef (Qualified (mod ++ [extractName name])) params tann body')
+        return (TLOper t opdef name' params tann body')
     TLType name tvars cons -> do
-        mod <- ask
+        name' <- fixName name
         let (conNames, conTypes) = unzip cons
-        let name' = Qualified (mod ++ [extractName name])
-        let conNames' = map (\n -> Qualified (mod ++ [extractName n])) conNames
-        return (TLType name' tvars (zip conNames' conTypes))
+        conNames' <- traverse fixName conNames
+        conTypes' <- traverse (traverse resolveType) conTypes
+        return (TLType name' tvars (zip conNames' conTypes'))
     other -> return other 
 
 resolveDecl :: UntypedDecl -> Resolve UntypedDecl
@@ -59,14 +61,14 @@ resolveExpr :: UntypedExpr -> Resolve UntypedExpr
 resolveExpr = \case
     l@(ELit _ _) -> return l
     EVar t gs name -> do
-        mod <- ask
-        return (EVar t gs (Qualified (mod ++ [extractName name])))
+        name' <- fixName name
+        return (EVar t gs name')
     EBinOp t name a b -> do
-        mod <- ask
-        return (EBinOp t (Qualified (mod ++ [extractName name])) a b)
+        name' <- fixName name
+        return (EBinOp t name' a b)
     EUnaOp t name a -> do   
-        mod <- ask
-        return (EUnaOp t (Qualified (mod ++ [extractName name])) a)
+        name' <- fixName name
+        return (EUnaOp t name' a)
     EBlock t decls res -> do
         decls' <- traverse resolveDecl decls
         res' <- resolveExpr res
@@ -104,6 +106,21 @@ resolveExpr = \case
 resolvePattern :: Pattern -> Resolve Pattern
 resolvePattern = \case
     PCon name binds -> do
-        mod <- ask
-        return (PCon (Qualified (mod ++ [extractName name])) binds)
+        name' <- fixName name
+        return (PCon name' binds)
     other -> return other
+
+resolveType :: Type -> Resolve Type
+resolveType = \case
+    TCon name types | extractName name `notElem` reservedNames -> flip TCon types <$> fixName name
+    TPtr t -> TPtr <$> resolveType t
+    TArray t -> TArray <$> resolveType t
+    TFunc ptypes rtype -> do
+        ptypes' <- traverse resolveType ptypes
+        TFunc ptypes' <$> resolveType rtype
+    other -> return other
+
+fixName :: Name -> Resolve Name
+fixName name = do
+    mod <- ask
+    return (Qualified (mod ++ [extractName name]))
