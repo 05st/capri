@@ -47,7 +47,8 @@ Installation steps can be found [here](https://github.com/05st/juno/wiki/Install
 ## Usage
 - To compile a file, simply run `juno path/to/file.jn --stl path/to/stl/`
 - For directories, turn on the `-d` (`--dir`) flag: `juno -d path/to/dir/ --stl path/to/stl/`
-- To change the output path, use `-o` (`--out`): `juno path/to/file.jn -o path/to/out.c --stl path/to/stl/`
+- To change the output path, use `-o` (`--out`): `juno path/to/file.jn -o path/to/out.c --stl path/to/stl/` \
+\
 Run `juno -h` for more help.
 
 ## Documentation
