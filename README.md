@@ -45,9 +45,9 @@ More examples [here](https://github.com/05st/capri/tree/master/examples)
 Installation steps can be found [here](https://github.com/05st/capri/wiki/Installation)
 
 ## Usage
-- To compile a file, simply run `capri path/to/file.jn --stl path/to/stl/`
-- For directories, turn on the `-d` (`--dir`) flag: `capri -d path/to/dir/ --stl path/to/stl/`
-- To change the output path, use `-o` (`--out`): `capri path/to/file.jn -o path/to/out.c --stl path/to/stl/` \
+- To compile a file, simply run `capri path/to/file.cpr -s path/to/stl/`
+- For directories, turn on the `-d` (`--dir`) flag: `capri -d path/to/dir/ -s path/to/stl/`
+- To change the output path, use `-o` (`--out`): `capri path/to/file.cpr -o path/to/out.c -s path/to/stl/` \
 \
 Run `capri -h` for more help.
 
