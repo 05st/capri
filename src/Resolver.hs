@@ -10,6 +10,8 @@ import Name
 import Type
 import Lexer
 
+import Debug.Trace
+
 type Resolve = Reader [Text]
 
 resolve :: UntypedProgram -> UntypedProgram
@@ -65,10 +67,13 @@ resolveExpr = \case
         return (EVar t gs name')
     EBinOp t name a b -> do
         name' <- fixName name
-        return (EBinOp t name' a b)
+        a' <- resolveExpr a
+        b' <- resolveExpr b
+        return (EBinOp t name' a' b')
     EUnaOp t name a -> do   
         name' <- fixName name
-        return (EUnaOp t name' a)
+        a' <- resolveExpr a
+        return (EUnaOp t name' a')
     EBlock t decls res -> do
         decls' <- traverse resolveDecl decls
         res' <- resolveExpr res

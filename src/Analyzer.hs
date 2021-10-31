@@ -198,7 +198,7 @@ inferFn name params rtann body = do
     subst <- liftEither (runSolve consts)
     env <- gets environment
     let typ = apply subst (TFunc ptypes rtype)
-        scheme = generalize env typ -- TODO: generalize for parametric polymorphism
+        scheme = generalize env typ
 
     let (TFunc ptypes' rtype') = typ
     when (isJust rtann) (constrain $ CEqual rtype' (fromJust rtann))

@@ -210,56 +210,8 @@ genModule (Module name _ topLvls _) = do
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
-    TLFunc t@(TFunc ptypes rtype) name_ params _ body -> do
-        let tvars = map TVar (S.toList $ tvs t)
-        let isPoly = not (null tvars)
-        name <- if isPoly
-            then do
-                addPoly name_
-                flushGen
-                setInMacro True
-                let name' = convertName name_
-                outln ("#define _poly_" <> name' <> "(__id, " <> mconcat (intersperse ", " (map convertType tvars)) <> ")")
-                return (name' <> "##__id ")
-            else return (convertName name_)
-
-        let (pnames, _) = unzip params
-        let rtypeC = convertType rtype
-        let ptypes' = map convertType ptypes
-        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
-        let fnDecl = rtypeC <> " " <> name <> "(" <> paramsText <> ")"
-
-        outln (fnDecl <> " {")
-        flushGen
-        out "return "
-        genExpr body
-        outln ";"
-        outln "}"
-        flushGen
-
-        unless isPoly (addForwardDecl (fnDecl <> ";"))
-        setInMacro False
-
-    TLOper (TFunc ptypes rtype) opdef oper_ params _ body -> do
-        let oper = convertName oper_
-
-        let (pnames, _) = unzip params
-        let rtypeC = convertType rtype
-        let ptypes' = map convertType ptypes
-        let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
-
-        id <- addOperEntry oper_
-        let fnDecl = rtypeC <> " _operator" <> fromString (show id) <> "(" <> paramsText <> ")"
-
-        outln (fnDecl <> " {")
-        flushGen
-        out "return "
-        genExpr body
-        outln ";"
-        outln "}"
-        flushGen
-
-        addForwardDecl (fnDecl <> ";")
+    TLFunc t name_ params _ body -> genFunction False t name_ params body
+    TLOper t _ oper_ params _ body -> genFunction True t oper_ params body
 
     TLType typeName tparams_ valueCons -> do
         let typeName' = "_type_" <> convertName typeName
@@ -287,7 +239,42 @@ genTopLevel = \case
 
         addForwardDecl ("typedef struct " <> typeName' <> " " <> typeName' <> ";")
 
-    _ -> return ()
+    TLExtern {} -> return ()
+
+genFunction :: Bool -> Type -> Name -> Params -> TypedExpr -> Gen ()
+genFunction isOper t@(TFunc ptypes rtype) name_ params body = do
+    let tvars = map TVar (S.toList $ tvs t)
+    let isPoly = not (null tvars)
+    name <- if isPoly
+        then do
+            addPoly name_
+            flushGen
+            setInMacro True
+            let name' = convertName name_
+            outln ("#define _poly_" <> name' <> "(__id, " <> mconcat (intersperse ", " (map convertType tvars)) <> ")")
+            return (name' <> "##__id ")
+        else return (convertName name_)
+
+    let (pnames, _) = unzip params
+    let rtypeC = convertType rtype
+    let ptypes' = map convertType ptypes
+    let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
+
+    fnDecl <- if isOper
+        then addOperEntry name_ >>= \id -> return (rtypeC <> " _operator" <> fromString (show id) <> "(" <> paramsText <> ")")
+        else return (rtypeC <> " " <> name <> "(" <> paramsText <> ")")
+
+    outln (fnDecl <> " {")
+    flushGen
+    out "return "
+    genExpr body
+    outln ";"
+    outln "}"
+    flushGen
+
+    unless isPoly (addForwardDecl (fnDecl <> ";"))
+    setInMacro False
+genFunction _ _ _ _ _ = throwError "genFunction failed (?)"
 
 genTypeVariant :: Builder -> (Name, [Type]) -> Gen ()
 genTypeVariant typeName (conName, conTypes) = do

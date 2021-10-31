@@ -25,6 +25,7 @@ data TopLvl a
     | TLOper a OperatorDef Name Params TypeAnnot (Expr a)
     | TLExtern Text [Type] Type
     | TLType Name [TVar] [(Name, [Type])]
+    | TLStruct 
     deriving (Show, Functor)
 
 data Decl a
