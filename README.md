@@ -3,6 +3,7 @@ A statically typed, functional programming language which compiles to C.
 Takes inspiration from languages such as Rust or Haskell.
 
 ![Total Lines](https://img.shields.io/tokei/lines/github/05st/capri)
+![Latest Release](https://img.shields.io/github/v/release/05st/capri?include_prereleases)
 
 ## Features
 - Type inference (no type annotations required)
