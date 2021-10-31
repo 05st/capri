@@ -60,13 +60,14 @@ jobs:
           JUNO_BUILD=$(find dist-newstyle \( -name 'juno-exe' -o -name 'juno-exe.exe' \) -type f)
           JUNO=juno
           mv $JUNO_BUILD $JUNO${{env.EXE_EXT}}
-          strip $JUNO
           if [[ "$OSTYPE" == "msys" ]]; then
+            strip $JUNO${{env.EXE_EXT}}
             7z a $JUNO.zip $JUNO${{env.EXE_EXT}}
             echo ::set-output name=path::$JUNO.zip
             echo ::set-output name=content_type::application/zip
             echo ::set-output name=extension::zip
           else
+            strip $JUNO
             gzip --best $JUNO
             echo ::set-output name=path::$JUNO.gz
             echo ::set-output name=content_type::application/gzip
