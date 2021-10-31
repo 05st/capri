@@ -58,9 +58,9 @@ resolveStmt = \case
 resolveExpr :: UntypedExpr -> Resolve UntypedExpr
 resolveExpr = \case
     l@(ELit _ _) -> return l
-    EVar t name -> do
+    EVar t gs name -> do
         mod <- ask
-        return (EVar t (Qualified (mod ++ [extractName name])))
+        return (EVar t gs (Qualified (mod ++ [extractName name])))
     EBinOp t name a b -> do
         mod <- ask
         return (EBinOp t (Qualified (mod ++ [extractName name])) a b)

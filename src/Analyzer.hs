@@ -189,9 +189,9 @@ inferFn name params rtann body = do
     ((body', rtype), consts) <- listen (scoped (`M.union` nenv) (inferExpr body))
 
     subst <- liftEither (runSolve consts)
-    env <- ask
+    env <- gets environment
     let typ = apply subst (TFunc ptypes rtype)
-        scheme = Forall [] typ -- generalize env typ -- TODO: generalize for parametric polymorphism
+        scheme = generalize env typ -- TODO: generalize for parametric polymorphism
 
     let (TFunc ptypes' rtype') = typ
     when (isJust rtann) (constrain $ CEqual rtype' (fromJust rtann))
@@ -246,9 +246,10 @@ inferExpr :: UntypedExpr -> Infer (TypedExpr, Type)
 inferExpr = \case
     ELit _ lit -> let typ = inferLit lit in return (ELit typ lit, typ)
 
-    EVar _ name -> do
+    EVar _ _ name -> do
         (typ, newName) <- lookupType name
-        return (EVar typ newName, typ)
+        let tvars = S.toList (tvs typ)
+        return (EVar typ (map TVar tvars) newName, typ)
 
     EAssign _ l r -> do
         (l', ltype) <- inferExpr l
@@ -256,11 +257,11 @@ inferExpr = \case
         constrain (CEqual ltype rtype)
         let expr' = EAssign ltype l' r'
         case l' of
-            EVar _ name -> do
+            EVar _ _ name -> do
                 isMut <- lookupMut name
                 unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
-            EIndex _ (EVar _ name) idx -> do
+            EIndex _ (EVar _ _ name) idx -> do
                 isMut <- lookupMut name
                 unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
@@ -337,7 +338,7 @@ inferExpr = \case
     ERef _ expr -> do
         (expr', etype) <- inferExpr expr
         case expr' of
-            EVar _ s -> return (ERef (TPtr etype) expr', TPtr etype)
+            EVar _ _ s -> return (ERef (TPtr etype) expr', TPtr etype)
             _ -> throwError "Cannot reference non-variable"
 
     ESizeof _ arg -> do

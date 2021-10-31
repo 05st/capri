@@ -21,6 +21,7 @@ import qualified Data.Set as S
 import Syntax
 import Type
 import Name
+import Substitution
 
 type Gen = ExceptT String (StateT GenState (Writer Builder))
 data GenState = GenState
@@ -33,6 +34,10 @@ data GenState = GenState
     , operMap :: M.Map Name Int
     , operCount :: Int
     , noStdLib :: Bool
+    , macros :: Builder
+    , inMacro :: Bool
+    , polyInits :: Builder
+    , polys :: S.Set Name
     } deriving (Show)
 
 generate :: FilePath -> TypedProgram -> Bool -> IO ()
@@ -47,6 +52,10 @@ generate file prog nostl =
             , operMap = M.empty
             , operCount = 0 
             , noStdLib = nostl
+            , macros = mempty
+            , inMacro = False
+            , polyInits = mempty
+            , polys = S.empty
             } in
     case runWriter (runStateT (runExceptT (runGen prog)) defaultState) of
         ((Left err, _), _) -> print err
@@ -75,7 +84,9 @@ out txt = do
     put (state { genBuffer = genBuffer state <> txt })
 
 outln :: Builder -> Gen ()
-outln = out . (<> "\n")
+outln txt = do
+    inMacro <- gets inMacro
+    out (txt <> if inMacro then "\\\n" else "\n")
 
 outBefore :: Builder -> Gen ()
 outBefore txt = do
@@ -86,8 +97,12 @@ flushGen :: Gen ()
 flushGen = do
     state <- get
     let buf = genBuffer state
-    let prog = program state
-    put (state { genBuffer = mempty, program = prog <> buf })
+    inMacro <- gets inMacro
+    if inMacro
+        then let macs = macros state
+             in put (state { genBuffer = mempty, macros = macs <> buf })
+        else let prog = program state
+             in put (state { genBuffer = mempty, program = prog <> buf })
 
 collectBuffer :: Gen Builder
 collectBuffer = do
@@ -122,6 +137,23 @@ addValueCon txt = do
     let curr = valueCons state
     put (state { valueCons = curr <> txt })
 
+setInMacro :: Bool -> Gen ()
+setInMacro val = do
+    state <- get
+    put (state { inMacro = val })
+
+addPolyInit :: Builder -> Gen ()
+addPolyInit txt = do
+    state <- get
+    let curr = polyInits state
+    put (state { polyInits = curr <> txt <> "\n" })
+
+addPoly :: Name -> Gen ()
+addPoly name = do
+    state <- get
+    let curr = polys state
+    put (state { polys = S.insert name curr })
+
 -- Code generation
 runGen :: TypedProgram -> Gen ()
 runGen mods = do
@@ -154,6 +186,12 @@ runGen mods = do
     tell "// forward decls\n"
     gets forwardDecls >>= tell
     tell "\n"
+    tell "// macros\n"
+    gets macros >>= tell
+    tell "\n"
+    tell "// poly inits\n"
+    gets polyInits >>= tell
+    tell "\n"
     tell "// program\n"
     gets program >>= tell
     tell "\n"
@@ -170,14 +208,25 @@ genModule (Module name _ topLvls _) = do
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
-    TLFunc (TFunc ptypes rtype) name_ params _ body -> do
-        let name = convertName name_
+    TLFunc t@(TFunc ptypes rtype) name_ params _ body -> do
+        let tvars = map TVar (S.toList $ tvs t)
+        let isPoly = not (null tvars)
+        name <- if isPoly
+            then do
+                addPoly name_
+                flushGen
+                setInMacro True
+                let name' = convertName name_
+                outln ("#define _poly_" <> name' <> "(__id, " <> mconcat (intersperse ", " (map convertType tvars)) <> ")")
+                return (name' <> "##__id ")
+            else return (convertName name_)
 
         let (pnames, _) = unzip params
         let rtypeC = convertType rtype
         let ptypes' = map convertType ptypes
         let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
         let fnDecl = rtypeC <> " " <> name <> "(" <> paramsText <> ")"
+
         outln (fnDecl <> " {")
         flushGen
         out "return "
@@ -186,7 +235,8 @@ genTopLevel = \case
         outln "}"
         flushGen
 
-        addForwardDecl (fnDecl <> ";")
+        unless isPoly (addForwardDecl (fnDecl <> ";"))
+        setInMacro False
 
     TLOper (TFunc ptypes rtype) opdef oper_ params _ body -> do
         let oper = convertName oper_
@@ -297,7 +347,15 @@ genStmt = \case
 genExpr :: TypedExpr -> Gen ()
 genExpr = \case
     ELit _ lit -> out (genLit lit)
-    EVar _ name -> out (convertName name)
+    EVar _ ityps name -> do
+        let name' = convertName name
+        polys <- gets polys
+        if name `S.member` polys
+            then do
+                id <- tmpVar
+                addPolyInit ("_poly_" <> name' <> "(" <> id <> ", "<> mconcat (intersperse ", " (map convertType ityps)) <> ");")
+                out (name' <> id)
+            else out name'
     EAssign _ l r -> do
         genExpr l
         out " = "
@@ -484,7 +542,7 @@ convertType = \case
         return ("array_" <> tstr <> "_" <> (fromString . show $ l))
         -}
 
-    TVar _ -> error "Parametric polymorphism not supported yet"
+    TVar (TV v) -> fromText v
     other -> error (show other)
 
 -- Qualified/Unqualified names to builder

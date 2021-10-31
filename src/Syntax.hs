@@ -40,7 +40,7 @@ data Stmt a
 
 data Expr a
     = ELit a Lit
-    | EVar a Name
+    | EVar a [a] Name
     | EAssign a (Expr a) (Expr a)
     | EBlock a [Decl a] (Expr a)
     | EIf a (Expr a) (Expr a) (Expr a)
@@ -89,7 +89,7 @@ type TypedExpr = Expr Type
 typeOfExpr :: TypedExpr -> Type
 typeOfExpr = \case
     ELit t _ -> t
-    EVar t _ -> t
+    EVar t _ _ -> t
     EAssign t _ _ -> t
     EBlock t _ _ -> t
     EIf t _ _ _ -> t

@@ -227,10 +227,10 @@ call :: Parser UntypedExpr
 call = do
     id <- identifier -- TODO
     args <- parens (sepBy expression comma)
-    return $ ECall () (EVar () . Unqualified $ id) args
+    return $ ECall () (EVar () [] . Unqualified $ id) args
 
 variable :: Parser UntypedExpr
-variable = EVar () . Unqualified <$> (identifier <|> parens operator)
+variable = EVar () [] . Unqualified <$> (identifier <|> parens operator)
 
 block :: Parser UntypedExpr
 block = braces $ do
