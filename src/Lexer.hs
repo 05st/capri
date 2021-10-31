@@ -40,16 +40,16 @@ symbol :: Text -> Parser Text
 symbol = L.symbol sc
 
 charLiteral :: Parser Char
-charLiteral = between (char '\'') (char '\'') L.charLiteral
+charLiteral = lexeme (between (char '\'') (char '\'') L.charLiteral)
 
 stringLiteral :: Parser String
-stringLiteral = char '\"' *> manyTill L.charLiteral (char '\"')
+stringLiteral = lexeme (char '\"' *> manyTill L.charLiteral (char '\"'))
 
 decimal :: Parser Integer
 decimal = lexeme L.decimal
 
 signedInteger :: Parser Integer
-signedInteger = L.signed sc decimal
+signedInteger = lexeme (L.signed sc decimal)
 
 octal :: Parser Integer
 octal = lexeme (char '0' *> char 'o' *> L.octal)
@@ -64,7 +64,7 @@ float :: Parser Double
 float = lexeme L.float
 
 signedFloat :: Parser Double
-signedFloat = L.signed sc float
+signedFloat = lexeme (L.signed sc float)
 
 identChar :: Parser Char
 identChar = alphaNumChar-- <|> oneOf ("_'" :: [Char])
