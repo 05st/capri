@@ -40,17 +40,13 @@ fn main() {
   printf("%d\n", n!);
 };
 ```
-More examples [here](https://github.com/05st/capri/tree/master/examples)
+More examples [here](https://github.com/05st/capri/tree/master/examples).
 
 ## Installation
-Installation steps can be found [here](https://github.com/05st/capri/wiki/Installation)
+Installation steps can be found [here](https://github.com/05st/capri/wiki/Installation).
 
 ## Usage
-- To compile a file, simply run `capri path/to/file.cpr -s path/to/stl/`
-- For directories, turn on the `-d` (`--dir`) flag: `capri -d path/to/dir/ -s path/to/stl/`
-- To change the output path, use `-o` (`--out`): `capri path/to/file.cpr -o path/to/out.c -s path/to/stl/` \
-\
-Run `capri -h` for more help.
+Usage instructions are found [here](https://github.com/05st/capri/wiki/Usage).
 
 ## Documentation
 Visit the [wiki](https://github.com/05st/capri/wiki) for documentation on the language.
