@@ -1,7 +1,7 @@
 " Vim syntax file
-" Language: Juno
+" Language: Capri
 " Maintainer: 05st
-" Latest Revision: 29 October 2021
+" Latest Revision: 31 October 2021
 
 if exists("b:current_syntax")
     finish

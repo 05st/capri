@@ -40,7 +40,7 @@ jobs:
         env:
           GHC_VER: ${{ matrix.ghc }}
         run: |
-          echo "LINUX_CABAL_ARGS=--datadir=$HOME/.juno" >> $GITHUB_ENV
+          echo "LINUX_CABAL_ARGS=--datadir=$HOME/.capri" >> $GITHUB_ENV
           echo "GHC_VERSION=$GHC_VER" >> $GITHUB_ENV
         
       - name: MacOS Setup
@@ -52,24 +52,24 @@ jobs:
       
       - name: Build
         run: |
-          cabal build exe:juno-exe -O2 $LINUX_CABAL_ARGS
+          cabal build exe:capri-exe -O2 $LINUX_CABAL_ARGS
           
       - name: Compress Binary
         id: compress_binary
         run: |
-          JUNO_BUILD=$(find dist-newstyle \( -name 'juno-exe' -o -name 'juno-exe.exe' \) -type f)
-          JUNO=juno
-          mv $JUNO_BUILD $JUNO${{env.EXE_EXT}}
+          CAPRI_BUILD=$(find dist-newstyle \( -name 'capri-exe' -o -name 'capri-exe.exe' \) -type f)
+          CAPRI=capri
+          mv $CAPRI_BUILD $CAPRI${{env.EXE_EXT}}
           if [[ "$OSTYPE" == "msys" ]]; then
-            strip $JUNO${{env.EXE_EXT}}
-            7z a $JUNO.zip $JUNO${{env.EXE_EXT}}
-            echo ::set-output name=path::$JUNO.zip
+            strip $CAPRI${{env.EXE_EXT}}
+            7z a $CAPRI.zip $CAPRI${{env.EXE_EXT}}
+            echo ::set-output name=path::$CAPRI.zip
             echo ::set-output name=content_type::application/zip
             echo ::set-output name=extension::zip
           else
-            strip $JUNO
-            gzip --best $JUNO
-            echo ::set-output name=path::$JUNO.gz
+            strip $CAPRI
+            gzip --best $CAPRI
+            echo ::set-output name=path::$CAPRI.gz
             echo ::set-output name=content_type::application/gzip
             echo ::set-output name=extension::gz
           fi
@@ -81,5 +81,5 @@ jobs:
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: ${{ steps.compress_binary.outputs.path }}
-          asset_name: juno-${{ runner.OS }}.${{ steps.compress_binary.outputs.extension }}
+          asset_name: capri-${{ runner.OS }}.${{ steps.compress_binary.outputs.extension }}
           asset_content_type: ${{ steps.compress_binary.outputs.content_type }}

@@ -54,7 +54,7 @@ runOpts :: Options -> IO ()
 runOpts (Options dirInput cOut backend stlDir outFile inPath) = do
     files <- if dirInput then readDir inPath else T.readFile inPath >>= \input -> return [(inPath, input)]
     (stlFiles, noStdLib) <- if null stlDir then return ([], True) else (, False) <$> readDir stlDir
-    cOutFile <- if cOut then return outFile else emptySystemTempFile "outjuno.c"
+    cOutFile <- if cOut then return outFile else emptySystemTempFile "outcapri.c"
 
     putStr "Parsing..."
     start <- getCPUTime
