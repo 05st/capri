@@ -58,8 +58,9 @@ jobs:
         id: compress_binary
         run: |
           JUNO_BUILD=$(find dist-newstyle \( -name 'juno-exe' -o -name 'juno-exe.exe' \) -type f)
-          JUNO=juno-${{env.GHC_VERSION}}
+          JUNO=juno
           mv $JUNO_BUILD $JUNO${{env.EXE_EXT}}
+          strip $JUNO
           if [[ "$OSTYPE" == "msys" ]]; then
             7z a $JUNO.zip $JUNO${{env.EXE_EXT}}
             echo ::set-output name=path::$JUNO.zip
@@ -79,5 +80,5 @@ jobs:
         with:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: ${{ steps.compress_binary.outputs.path }}
-          asset_name: juno-${{ runner.OS }}-${{ env.GHC_VERSION }}${{env.EXE_EXT}}.${{ steps.compress_binary.outputs.extension }}
+          asset_name: juno-${{ runner.OS }}.${{ steps.compress_binary.outputs.extension }}
           asset_content_type: ${{ steps.compress_binary.outputs.content_type }}
