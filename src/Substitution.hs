@@ -28,8 +28,8 @@ instance Substitutable TypeScheme where
     apply s (Forall vs t) = Forall vs (apply (foldr Map.delete s vs) t)
 
 instance Substitutable Constraint where
-    tvs (CEqual a b) = tvs a `Set.union` tvs b
-    apply s (CEqual a b) = CEqual (apply s a) (apply s b)
+    tvs (CEqual _ a b) = tvs a `Set.union` tvs b
+    apply s (CEqual pos a b) = CEqual pos (apply s a) (apply s b)
 
 instance Substitutable a => Substitutable [a] where
     tvs = foldr (Set.union . tvs) Set.empty

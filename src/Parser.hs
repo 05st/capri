@@ -29,12 +29,13 @@ parseModule = do
     S.put (opdefs, [])
 
     sc
+    pos <- getSourcePos
     name <- reserved "module" *> identifier <* semi
     imports <- many (reserved "import" *> parseImport <* semi)
     decls <- manyTill topLvlDecl eof
 
     pubs <- S.gets snd
-    return (Module [name] imports decls pubs)
+    return (Module pos [name] imports decls pubs)
     where
         parseImport = sepBy1 identifier (reservedOp "::")
 
@@ -44,6 +45,7 @@ topLvlDecl = try topLvlFuncDecl <|> try topLvlOperDecl <|> topLvlExternDecl <|> 
 
 topLvlFuncDecl :: Parser UntypedTopLvl
 topLvlFuncDecl = do
+    pos <- getSourcePos
     isPub <- option False (True <$ reserved "pub")
     reserved "fn"
     name <- identifier
@@ -52,10 +54,11 @@ topLvlFuncDecl = do
     expr <- expression
     semi
     S.when isPub (addPub name)
-    return $ TLFunc () (Unqualified name) paramsParsed retAnnot expr
+    return $ TLFunc () pos (Unqualified name) paramsParsed retAnnot expr
 
 topLvlOperDecl :: Parser UntypedTopLvl
 topLvlOperDecl = do
+    pos <- getSourcePos
     isPub <- option False (True <$ reserved "pub")
     reserved "op"
     assocParsed <- assoc
@@ -72,7 +75,7 @@ topLvlOperDecl = do
     semi
 
     S.when isPub (addPub oper)
-    return $ TLOper () opdef (Unqualified oper) paramsParsed retAnnot expr
+    return $ TLOper () pos opdef (Unqualified oper) paramsParsed retAnnot expr
     where
         assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
             <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
@@ -93,6 +96,7 @@ topLvlExternDecl = do
 
 topLvlTypeDecl :: Parser UntypedTopLvl
 topLvlTypeDecl = do
+    pos <- getSourcePos
     isPub <- option False (True <$ reserved "pub")
     reserved "type"
     typeName <- typeIdentifier
@@ -102,7 +106,7 @@ topLvlTypeDecl = do
     semi
 
     S.when isPub (mapM_ (addPub . extractName . fst) valueCons *> addPub typeName)
-    return (TLType (Unqualified typeName) typeParams valueCons)
+    return (TLType pos (Unqualified typeName) typeParams valueCons)
     where
         valueCon = do
             conName <- typeIdentifier
@@ -115,11 +119,12 @@ declaration = try varDecl <|> (DStmt <$> statement)
 
 varDecl :: Parser UntypedDecl
 varDecl = do
+    pos <- getSourcePos 
     isMut <- option False (True <$ reserved "mut")
     name <- identifier
     annot <- optional (try typeAnnot)
     reservedOp ":="
-    DVar () isMut name annot <$> (expression <* semi)
+    DVar () pos isMut name annot <$> (expression <* semi)
 
 -- Statements
 statement :: Parser UntypedStmt
@@ -132,26 +137,28 @@ retStmt = do
 
 whileStmt :: Parser UntypedStmt
 whileStmt = do
+    pos <- getSourcePos
     reserved "while"
     cond <- expression
     body <- expression
     semi
-    return (SWhile cond body)
+    return (SWhile pos cond body)
 
 -- Expressions
 expression :: Parser UntypedExpr
 expression = do
     opers <- S.gets fst
-    let table = mkTable opers
+    pos <- getSourcePos
+    let table = mkTable pos opers
     makeExprParser term table
     where
-        mkTable = map (map toParser) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
-        toParser (OperatorDef assoc _ oper) = case assoc of
-            ANone -> infixOp oper (EBinOp () . Unqualified $ oper)
-            ALeft -> infixlOp oper (EBinOp () . Unqualified $ oper)
-            ARight -> infixrOp oper (EBinOp () . Unqualified $ oper)
-            APrefix -> prefixOp oper (EUnaOp () . Unqualified $ oper)
-            APostfix -> postfixOp oper (EUnaOp () . Unqualified $ oper)
+        mkTable pos = map (map (toParser pos)) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
+        toParser pos (OperatorDef assoc _ oper) = case assoc of
+            ANone -> infixOp oper (EBinOp () pos . Unqualified $ oper)
+            ALeft -> infixlOp oper (EBinOp () pos . Unqualified $ oper)
+            ARight -> infixrOp oper (EBinOp () pos . Unqualified $ oper)
+            APrefix -> prefixOp oper (EUnaOp () pos . Unqualified $ oper)
+            APostfix -> postfixOp oper (EUnaOp () pos . Unqualified $ oper)
         infixOp name f = InfixN (reservedOp name >> return f)
         infixlOp name f = InfixL (reservedOp name >> return f)
         infixrOp name f = InfixR (reservedOp name >> return f)
@@ -163,17 +170,20 @@ term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try index <|> (de
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
+    pos <- getSourcePos
     reserved "if"
     cond <- expression
     trueBody <- expression
-    falseBody <- option (ELit () LUnit) (reserved "else" *> expression)
-    return $ EIf () cond trueBody falseBody
+    pos2 <- getSourcePos
+    falseBody <- option (ELit () pos2 LUnit) (reserved "else" *> expression)
+    return $ EIf () pos cond trueBody falseBody
 
 matchExpr :: Parser UntypedExpr
 matchExpr = do
+    pos <- getSourcePos
     reserved "match"
     mexpr <- expression
-    EMatch () mexpr <$> braces (sepBy1 matchBranch comma)
+    EMatch () pos mexpr <$> braces (sepBy1 matchBranch comma)
     where
         matchBranch = do
             pat <- pattern
@@ -182,66 +192,81 @@ matchExpr = do
 
 closure :: Parser UntypedExpr
 closure = do
+    pos <- getSourcePos
     closedVars <- brackets (sepBy identifier comma)
     paramsParsed <- params
     retAnnot <- optional typeAnnot
-    EClosure () closedVars paramsParsed retAnnot <$> expression
+    EClosure () pos closedVars paramsParsed retAnnot <$> expression
 
 assign :: Parser UntypedExpr
 assign = do
+    pos <- getSourcePos
     var <- deref <|> try index <|> value 
     reservedOp "="
-    EAssign () var <$> expression
+    EAssign () pos var <$> expression
 
 index :: Parser UntypedExpr
 index = do
+    pos <- getSourcePos
     expr <- value
     idx <- brackets decimal
-    return (EIndex () expr (fromIntegral idx))
+    return (EIndex () pos expr (fromIntegral idx))
 
 deref :: Parser UntypedExpr
 deref = do
+    pos <- getSourcePos
     symbol "*"
-    EDeref () <$> value
+    EDeref () pos <$> value
 
 ref :: Parser UntypedExpr
 ref = do
+    pos <- getSourcePos
     symbol "&"
-    ERef () <$> value
+    ERef () pos <$> value
 
 value :: Parser UntypedExpr
-value = array <|> (try sizeof <|> try cast <|> try call) <|> (ELit () <$> literal) <|> try variable <|> try block <|> parens expression
+value = do
+    pos <- getSourcePos 
+    array <|> (try sizeof <|> try cast <|> try call) <|> (ELit () pos <$> literal) <|> try variable <|> try block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
+    pos <- getSourcePos 
     reserved "sizeof"
     arg <- try (Left <$> type') <|> (Right <$> expression)
-    return (ESizeof () arg)
+    return (ESizeof () pos arg)
 
 cast :: Parser UntypedExpr
 cast = do
+    pos <- getSourcePos 
     typ <- parens type'
-    ECast () typ <$> expression
+    ECast () pos typ <$> expression
 
 call :: Parser UntypedExpr
 call = do
+    pos <- getSourcePos
     id <- identifier -- TODO
     args <- parens (sepBy expression comma)
-    return $ ECall () (EVar () [] . Unqualified $ id) args
+    return $ ECall () pos (EVar () pos [] . Unqualified $ id) args
 
 variable :: Parser UntypedExpr
-variable = EVar () [] . Unqualified <$> (identifier <|> parens operator)
+variable = do
+    pos <- getSourcePos
+    EVar () pos [] . Unqualified <$> (identifier <|> parens operator)
 
 block :: Parser UntypedExpr
 block = braces $ do
+    pos <- getSourcePos
     decls <- many (try declaration)
-    result <- option (ELit () LUnit) expression
-    return $ EBlock () decls result
+    pos2 <- getSourcePos
+    result <- option (ELit () pos2 LUnit) expression
+    return $ EBlock () pos decls result
 
 array :: Parser UntypedExpr
 array = do
+    pos <- getSourcePos
     exprs <- brackets (sepBy expression comma)
-    return (EArray () exprs)
+    return (EArray () pos exprs)
 
 -- Literals
 literal :: Parser Lit
@@ -310,6 +335,9 @@ typeAnnot = symbol ":" *> type'
 
 params :: Parser [(Text, Maybe Type)]
 params = parens (sepBy ((,) <$> identifier <*> optional typeAnnot) comma)
+
+-- Utility
+
 
 -- Run parser
 parse :: [(String, Text)] -> Either String UntypedProgram

@@ -14,6 +14,8 @@ import qualified Data.Set as S
 import Control.Monad.RWS
 import Control.Monad.Except
 
+import Text.Megaparsec.Pos
+
 import Debug.Trace
 
 import Syntax
@@ -24,7 +26,12 @@ import Name
 import Resolver
 
 type AEnv = M.Map Name (TypeScheme, Bool)
-type Infer = RWST [Import] [Constraint] InferState (Except String)
+
+data AnalyzerError = AnalyzerError SourcePos String
+type Infer = RWST [Import] [Constraint] InferState (Except AnalyzerError)
+
+instance Show AnalyzerError where   
+    show (AnalyzerError pos msg) = sourcePosPretty pos ++ "\n\t" ++ msg
 
 data InferState = InferState
     { environment :: AEnv
@@ -36,7 +43,9 @@ data InferState = InferState
     } deriving (Show)
 
 analyze :: UntypedProgram -> Either String TypedProgram 
-analyze = runInfer . resolve
+analyze prog = case (runInfer . resolve) prog of
+    Left err -> Left (show err)
+    Right res -> Right res
 
 -- Type Inference
 constrain :: Constraint -> Infer ()
@@ -61,7 +70,7 @@ instantiate (Forall vs t) = do
     let sub = M.fromList (zip vs nvs)
     return (apply sub t)
 
-runInfer :: UntypedProgram -> Either String TypedProgram
+runInfer :: UntypedProgram -> Either AnalyzerError TypedProgram
 runInfer prog =
     let defaultState = InferState
             { environment = M.empty
@@ -84,10 +93,10 @@ inferProgram mods = do
     mainExistsCurr <- gets mainExists
     if mainExistsCurr
         then return mods'
-        else throwError "No 'main' function found in a top module called 'main'"
+        else err (SourcePos "" (mkPos 0) (mkPos 0)) "No 'main' function found in a top module called 'main'"
 
 inferModulePre :: UntypedModule -> Infer ()
-inferModulePre (Module name _ topLvls pubs) = do
+inferModulePre (Module pos name _ topLvls pubs) = do
     modPubs <- gets modulePubs
 
     case M.lookup name modPubs of
@@ -96,53 +105,53 @@ inferModulePre (Module name _ topLvls pubs) = do
             let toInsert = M.fromList $ filter (\(n, _) -> extractName n `elem` pubs) toInsert'
             state <- get
             put (state { pubsEnv = pubsEnv state `M.union` toInsert, modulePubs = M.insert name pubs (modulePubs state) })
-        _ -> throwError ("Already defined module " ++ show name)
+        _ -> err pos ("Already defined module " ++ show name)
 
 generatePubVar :: UntypedTopLvl -> Infer [(Name, Type)]
 generatePubVar = \case
-    TLFunc _ name _ _ _ -> do
+    TLFunc _ _ name _ _ _ -> do
         var <- fresh
         return [(name, var)]
-    TLOper _ _ oper _ _ _ -> do
+    TLOper _ _ _ oper _ _ _ -> do
         var <- fresh
         return [(oper, var)]
     TLExtern {} -> return []
-    TLType _ _ cons -> do
+    TLType _ _ _ cons -> do
         let (conNames, _) = unzip cons
         vars <- traverse (const fresh) conNames
         return (zip conNames vars)
 
 inferModule :: UntypedModule -> Infer TypedModule
-inferModule (Module name imports topLvls pubs) = do
+inferModule (Module pos name imports topLvls pubs) = do
     traverse_ insertTmpVars topLvls
     topLvls' <- local (const imports) (traverse inferTopLvl topLvls)
 
     state <- get
     put (state { environment = M.empty
                 , topLvlTmps = M.empty })
-    return (Module name imports topLvls' pubs)
+    return (Module pos name imports topLvls' pubs)
 
 insertTmpVars :: UntypedTopLvl -> Infer ()
 insertTmpVars = \case
-    TLFunc _ name _ _ _ -> do
+    TLFunc _ _ name _ _ _ -> do
         var <- fresh
         state <- get
         put (state { topLvlTmps = M.insert name var (topLvlTmps state) })
 
-    TLOper _ _ oper _ _ _ -> do
+    TLOper _ _ _ oper _ _ _ -> do
         var <- fresh
         state <- get
         put (state { topLvlTmps = M.insert oper var (topLvlTmps state) })
 
-    TLType typeName typeParams cons -> insertValueCons typeName typeParams cons
+    TLType pos typeName typeParams cons -> insertValueCons pos typeName typeParams cons
 
     TLExtern name ptypes rtype -> insertEnv (Unqualified name, (Forall [] $ TFunc ptypes rtype, False))
 
-insertValueCons :: Name -> [TVar] -> [(Name, [Type])] -> Infer ()
-insertValueCons _ _ [] = return ()
-insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
+insertValueCons :: SourcePos -> Name -> [TVar] -> [(Name, [Type])] -> Infer ()
+insertValueCons _ _ _ [] = return ()
+insertValueCons pos typeName typeParams ((conName, conTypes) : restCons) = do
     if any (checkInfiniteType typeName) conTypes
-        then throwError $ "Infinite type " ++ show typeName ++ " (con. " ++ show conName ++ ")"
+        then err pos $ "Infinite type " ++ show typeName ++ " (con. " ++ show conName ++ ")"
         else do
             let typeParams' = map TVar typeParams
             let varsTypeParams = tvs typeParams'
@@ -151,12 +160,12 @@ insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
             env <- gets environment
             if (varsTypeParams `S.intersection` varsCon) /= varsCon
                 then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
-                     in throwError ("Undefined type variables " ++ show undefineds)
+                     in err pos ("Undefined type variables " ++ show undefineds)
                 else let typ = case conTypes of
                             [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
                             _ -> TFunc conTypes (TCon typeName typeParams') --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
                          scheme = Forall [] typ
-                     in insertEnv (conName, (scheme, False)) *> insertValueCons typeName typeParams restCons
+                     in insertEnv (conName, (scheme, False)) *> insertValueCons pos typeName typeParams restCons
     where
         checkInfiniteType typeName (TCon name _) = name == typeName
         checkInfiniteType typeName (TArray t) = checkInfiniteType typeName t
@@ -164,9 +173,9 @@ insertValueCons typeName typeParams ((conName, conTypes) : restCons) = do
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
-    TLFunc _ name params rtann body -> do
+    TLFunc _ pos name params rtann body -> do
         alreadyDefined <- exists name
-        if alreadyDefined then throwError ("Function '" ++ show name ++ "' already defined")
+        if alreadyDefined then err pos ("Function '" ++ show name ++ "' already defined")
         else do
             case name of
                 Qualified name -> 
@@ -174,21 +183,21 @@ inferTopLvl = \case
                         state <- get
                         put (state { mainExists = True }))
                 _ -> return ()
-            (body', typ) <- inferFn name params rtann body
-            return (TLFunc typ name params rtann body')
+            (body', typ) <- inferFn pos name params rtann body
+            return (TLFunc typ pos name params rtann body')
 
-    TLOper _ opdef oper params rtann body -> do
+    TLOper _ pos opdef oper params rtann body -> do
         alreadyDefined <- exists oper
-        if alreadyDefined then throwError ("Operator '" ++ show oper ++ "' already defined")
+        if alreadyDefined then err pos ("Operator '" ++ show oper ++ "' already defined")
         else do
-            (body', typ) <- inferFn oper params rtann body
-            return (TLOper typ opdef oper params rtann body')
+            (body', typ) <- inferFn pos oper params rtann body
+            return (TLOper typ pos opdef oper params rtann body')
 
-    TLType typeName typeParams cons -> return (TLType typeName typeParams cons)
+    TLType pos typeName typeParams cons -> return (TLType pos typeName typeParams cons)
     TLExtern name ptypes rtype -> return (TLExtern name ptypes rtype)
 
-inferFn :: Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
-inferFn name params rtann body = do
+inferFn :: SourcePos -> Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
+inferFn pos name params rtann body = do
     let (pnames, panns) = unzip params
     ptypes <- traverse (const fresh) params
     let ptypesSchemes = map ((, False) . Forall []) ptypes
@@ -201,38 +210,38 @@ inferFn name params rtann body = do
         scheme = generalize env typ
 
     let (TFunc ptypes' rtype') = typ
-    when (isJust rtann) (constrain $ CEqual rtype' (fromJust rtann))
-    sequence_ [when (isJust pann) (constrain $ CEqual ptype (fromJust pann)) | (ptype, pann) <- zip ptypes' panns]
+    when (isJust rtann) (constrain $ CEqual pos rtype' (fromJust rtann))
+    sequence_ [when (isJust pann) (constrain $ CEqual pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes' panns]
 
     retStmtTypes <- searchReturnsExpr body'
-    traverse_ (constrain . CEqual rtype') retStmtTypes
+    traverse_ (constrain . CEqual pos rtype') retStmtTypes
 
     state <- get
     let tmpsEnv = topLvlTmps state
-    constrain (CEqual typ (fromJust (M.lookup name tmpsEnv)))
+    constrain (CEqual pos typ (fromJust (M.lookup name tmpsEnv)))
     put (state {topLvlTmps = M.delete name tmpsEnv})
 
     pubsEnv <- gets pubsEnv
     let lookup = M.lookup name pubsEnv
-    when (isJust lookup) (constrain (CEqual typ (fromJust lookup)))
+    when (isJust lookup) (constrain (CEqual pos typ (fromJust lookup)))
     
     insertEnv (name, (scheme, False)) -- already scoped by block
     return (body', typ)
 
 inferDecl :: UntypedDecl -> Infer TypedDecl
 inferDecl = \case
-    DVar _ isMut name tann expr -> do
+    DVar _ pos isMut name tann expr -> do
         alreadyDefined <- exists (Unqualified name)
-        if alreadyDefined then throwError ("Variable '" ++ unpack name ++ "' already defined")
+        if alreadyDefined then err pos ("Variable '" ++ unpack name ++ "' already defined")
         else do
             ((expr', etype), consts) <- listen (inferExpr expr)
             subst <- liftEither (runSolve consts)
             env <- ask
             let typ = apply subst etype
                 scheme = Forall [] typ -- TODO: generalize
-            when (isJust tann) (constrain $ CEqual typ (fromJust tann))
+            when (isJust tann) (constrain $ CEqual pos typ (fromJust tann))
             insertEnv (Unqualified name, (scheme, isMut))
-            return (DVar typ isMut name tann expr')
+            return (DVar typ pos isMut name tann expr')
     DStmt s -> DStmt <$> inferStmt s
 
 inferStmt :: UntypedStmt -> Infer TypedStmt
@@ -240,133 +249,133 @@ inferStmt = \case
     SRet expr -> do
         (expr', _) <- inferExpr expr
         return (SRet expr')
-    SWhile cond body -> do
+    SWhile pos cond body -> do
         (cond', ctype) <- inferExpr cond
         (body', _) <- inferExpr body
-        constrain (CEqual ctype TBool)
-        return (SWhile cond' body')
+        constrain (CEqual pos ctype TBool)
+        return (SWhile pos cond' body')
     SExpr expr -> do
         (expr', _) <- inferExpr expr
         return (SExpr expr')
 
 inferExpr :: UntypedExpr -> Infer (TypedExpr, Type)
 inferExpr = \case
-    ELit _ lit -> let typ = inferLit lit in return (ELit typ lit, typ)
+    ELit _ pos lit -> let typ = inferLit lit in return (ELit typ pos lit, typ)
 
-    EVar _ _ name -> do
-        (typ, newName) <- lookupType name
+    EVar _ pos _ name -> do
+        (typ, newName) <- lookupType pos name
         let tvars = S.toList (tvs typ)
-        return (EVar typ (map TVar tvars) newName, typ)
+        return (EVar typ pos (map TVar tvars) newName, typ)
 
-    EAssign _ l r -> do
+    EAssign _ pos l r -> do
         (l', ltype) <- inferExpr l
         (r', rtype) <- inferExpr r
-        constrain (CEqual ltype rtype)
-        let expr' = EAssign ltype l' r'
+        constrain (CEqual pos ltype rtype)
+        let expr' = EAssign ltype pos l' r'
         case l' of
-            EVar _ _ name -> do
-                isMut <- lookupMut name
-                unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
+            EVar _ _ _ name -> do
+                isMut <- lookupMut pos name
+                unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
-            EIndex _ (EVar _ _ name) idx -> do
-                isMut <- lookupMut name
-                unless isMut (throwError $ "Cannot assign to immutable variable " ++ show name)
+            EIndex _ _ (EVar _ vpos _ name) idx -> do
+                isMut <- lookupMut pos name
+                unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
-            EDeref _ _ -> return (expr', ltype)
-            _ -> throwError "Cannot assign to non-lvalue"
+            EDeref {} -> return (expr', ltype)
+            _ -> err pos "Cannot assign to non-lvalue"
 
-    EBlock _ origDecls expr -> do
+    EBlock _ pos origDecls expr -> do
         (decls', expr', etype) <- scoped id (do
             ds <- traverse inferDecl origDecls
             (ex, et) <- inferExpr expr
             return (ds, ex, et))
-        return (EBlock etype decls' expr', etype)
+        return (EBlock etype pos decls' expr', etype)
 
-    EIf _ cond texpr fexpr -> do
+    EIf _ pos cond texpr fexpr -> do
         (cond', ctype) <- inferExpr cond
         (texpr', ttype) <- inferExpr texpr
         (fexpr', ftype) <- inferExpr fexpr
-        constrain (CEqual ctype TBool)
-        constrain (CEqual ttype ftype)
-        return (EIf ttype cond' texpr' fexpr', ttype)
+        constrain (CEqual pos ctype TBool)
+        constrain (CEqual pos ttype ftype)
+        return (EIf ttype pos cond' texpr' fexpr', ttype)
 
-    EMatch _ mexpr branches -> do
+    EMatch _ pos mexpr branches -> do
         (mexpr', mtype) <- inferExpr mexpr
-        (branches', btypes) <- unzip <$> traverse (inferBranch mtype) branches
+        (branches', btypes) <- unzip <$> traverse (inferBranch pos mtype) branches
         case btypes of
-            [] -> throwError "Empty match expression"
-            (btype : rest) -> (EMatch btype mexpr' branches', btype) <$ traverse_ (constrain . CEqual btype) rest
+            [] -> err pos "Empty match expression"
+            (btype : rest) -> (EMatch btype pos mexpr' branches', btype) <$ traverse_ (constrain . CEqual pos btype) rest
 
-    EBinOp _ oper a b -> do
+    EBinOp _ pos oper a b -> do
         (a', at) <- inferExpr a
         (b', bt) <- inferExpr b
         case oper of
             _ | extractName oper `elem` ["+", "-", "*", "/"] -> do -- TODO
-                return (EBinOp at oper a' b', at)
+                return (EBinOp at pos oper a' b', at)
             _ | extractName oper `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
-                return (EBinOp TBool oper a' b', TBool)
+                return (EBinOp TBool pos oper a' b', TBool)
             _ | extractName oper `elem` ["||", "&&"] -> do
-                constrain (CEqual at TBool)
-                constrain (CEqual bt TBool)
-                return (EBinOp TBool oper a' b', TBool)
+                constrain (CEqual pos at TBool)
+                constrain (CEqual pos bt TBool)
+                return (EBinOp TBool pos oper a' b', TBool)
             _ -> do
-                (opt, newName) <- lookupType oper
+                (opt, newName) <- lookupType pos oper
                 rt <- fresh
                 let ft = TFunc [at, bt] rt
-                constrain (CEqual opt ft)
-                return (EBinOp rt newName a' b', rt)
+                constrain (CEqual pos opt ft)
+                return (EBinOp rt pos newName a' b', rt)
 
-    EUnaOp _ oper expr -> do
-        (opt, newName) <- lookupType oper
+    EUnaOp _ pos oper expr -> do
+        (opt, newName) <- lookupType pos oper
         (a', at) <- inferExpr expr
         rt <- fresh
-        constrain (CEqual opt (TFunc [at] rt))
-        return (EUnaOp rt oper a', rt)
+        constrain (CEqual pos opt (TFunc [at] rt))
+        return (EUnaOp rt pos oper a', rt)
 
-    EClosure _ closedVars params rtann body -> throwError "Closures not implemented yet"
+    EClosure _ pos closedVars params rtann body -> err pos "Closures not implemented yet"
 
-    ECall _ expr args -> do
+    ECall _ pos expr args -> do
         (a', at) <- inferExpr expr
         (bs', bts) <- unzip <$> traverse inferExpr args
         rt <- fresh
-        constrain (CEqual at (TFunc bts rt))
-        return (ECall rt a' bs', rt)
+        constrain (CEqual pos at (TFunc bts rt))
+        return (ECall rt pos a' bs', rt)
 
-    ECast _ targ expr -> do
+    ECast _ pos targ expr -> do
         (expr', etype) <- inferExpr expr
-        return (ECast targ targ expr', targ) -- TODO
+        return (ECast targ pos targ expr', targ) -- TODO
 
-    EDeref _ expr -> do
+    EDeref _ pos expr -> do
         (expr', etype) <- inferExpr expr
         tv <- fresh
-        constrain (CEqual etype (TPtr tv))
-        return (EDeref tv expr', tv)
+        constrain (CEqual pos etype (TPtr tv))
+        return (EDeref tv pos expr', tv)
 
-    ERef _ expr -> do
+    ERef _ pos expr -> do
         (expr', etype) <- inferExpr expr
         case expr' of
-            EVar _ _ s -> return (ERef (TPtr etype) expr', TPtr etype)
-            _ -> throwError "Cannot reference non-variable"
+            EVar _ _ _ s -> return (ERef (TPtr etype) pos expr', TPtr etype)
+            _ -> err pos "Cannot reference non-variable"
 
-    ESizeof _ arg -> do
+    ESizeof _ pos arg -> do
         arg' <- case arg of
             Left t -> return (Left t)
             Right e -> Right . fst <$> inferExpr e
-        return (ESizeof TInt32 arg', TInt32)
+        return (ESizeof TInt32 pos arg', TInt32)
 
-    EArray _ exprs -> do
+    EArray _ pos exprs -> do
         (exprs', ets) <- unzip <$> traverse inferExpr exprs
         tv <- fresh
-        sequence_ [constrain (CEqual tv et) | et <- ets]
+        sequence_ [constrain (CEqual pos tv et) | et <- ets]
         let typ = TArray tv
-        return (EArray typ exprs', typ)
+        return (EArray typ pos exprs', typ)
 
-    EIndex _ expr idx -> do
+    EIndex _ pos expr idx -> do
         (expr', etype) <- inferExpr expr
         tv <- fresh
         let typ = TArray tv
-        constrain (CEqual typ etype)
-        return (EIndex tv expr' idx, tv)
+        constrain (CEqual pos typ etype)
+        return (EIndex tv pos expr' idx, tv)
 
 inferLit :: Lit -> Type
 inferLit = \case
@@ -377,31 +386,31 @@ inferLit = \case
     LBool _ -> TBool
     LUnit -> TUnit
 
-inferBranch :: Type -> (Pattern, UntypedExpr) -> Infer ((Pattern, TypedExpr), Type)
-inferBranch mt (pat, expr) = do
-    (pt, vars) <- inferPattern pat
+inferBranch :: SourcePos -> Type -> (Pattern, UntypedExpr) -> Infer ((Pattern, TypedExpr), Type)
+inferBranch pos mt (pat, expr) = do
+    (pt, vars) <- inferPattern pos pat
     let vars' = map (\(s, ts) -> (s, (ts, False))) vars
-    constrain (CEqual pt mt)
+    constrain (CEqual pos pt mt)
     (expr', et) <- scoped (M.fromList vars' `M.union`) (inferExpr expr)
     return ((pat, expr'), et)
 
-inferPattern :: Pattern -> Infer (Type, [(Name, TypeScheme)])
-inferPattern (PVar name) = do
+inferPattern :: SourcePos -> Pattern -> Infer (Type, [(Name, TypeScheme)])
+inferPattern pos (PVar name) = do
     ptype <- fresh
     pure (ptype, [(Unqualified name, Forall [] ptype)])
-inferPattern (PLit lit) = return (inferLit lit, [])
-inferPattern PWild = do
+inferPattern _ (PLit lit) = return (inferLit lit, [])
+inferPattern _ PWild = do
     ptype <- fresh
     return (ptype, [])
-inferPattern (PCon conName binds) = do
+inferPattern pos (PCon conName binds) = do
     ptypes <- traverse (const fresh) binds
     let res = [(Unqualified bind, Forall [] ptype) | (bind, ptype) <- zip binds ptypes]
-    (conType, _) <- lookupType conName
+    (conType, _) <- lookupType pos conName
     t <- fresh
     let conType' = case binds of
             [] -> t
             _ -> TFunc ptypes t
-    constrain (CEqual conType' conType)
+    constrain (CEqual pos conType' conType)
     return (t, res)
 
 -- Environment helpers
@@ -420,8 +429,8 @@ insertEnv (name, info) = do
     state <- get
     put (state { environment = M.insert name info (environment state) })
 
-lookupVar :: Name -> Infer ((Type, Name), Bool)
-lookupVar name = do
+lookupVar :: SourcePos -> Name -> Infer ((Type, Name), Bool)
+lookupVar pos name = do
     env <- gets environment
     case M.lookup name env of
         Just (ts, m) -> (\t -> ((t, name), m)) <$> instantiate ts
@@ -431,70 +440,70 @@ lookupVar name = do
                 tmpsEnv <- gets topLvlTmps
                 case M.lookup name tmpsEnv of
                     Just v -> return ((v, name), False)
-                    Nothing -> ask >>= checkImports name
+                    Nothing -> ask >>= checkImports pos name
 
-checkImports :: Name -> [Import] -> Infer ((Type, Name), Bool)
-checkImports name [] = throwError ("Unknown identifier " ++ show name)
-checkImports name (imp : imps) = do
+checkImports :: SourcePos -> Name -> [Import] -> Infer ((Type, Name), Bool)
+checkImports pos name [] = err pos ("Unknown identifier " ++ show name)
+checkImports pos name (imp : imps) = do
     moduleMap <- gets modulePubs
     pubsTypes <- gets pubsEnv
     let pubs = fromMaybe [] (M.lookup imp moduleMap)
     if extractName name `elem` pubs
         then let newName = Qualified (imp ++ [extractName name]) in return ((fromJust (M.lookup newName pubsTypes), newName), False)
-        else checkImports name imps
+        else checkImports pos name imps
 
-lookupType :: Name -> Infer (Type, Name)
-lookupType name = fst <$> lookupVar name
+lookupType :: SourcePos -> Name -> Infer (Type, Name)
+lookupType pos name = fst <$> lookupVar pos name
 
-lookupMut :: Name -> Infer Bool
-lookupMut name = snd <$> lookupVar name
+lookupMut :: SourcePos -> Name -> Infer Bool
+lookupMut pos name = snd <$> lookupVar pos name
 
 exists :: Name -> Infer Bool
 exists name = isJust . M.lookup name <$> gets environment -- Doesn't check temp env for top levels
 
 -- Unification
-type Solve = ExceptT String Identity
+type Solve = ExceptT AnalyzerError Identity
 
 compose :: Substitution -> Substitution -> Substitution
 compose a b = M.map (apply a) b `M.union` a
 
-unify :: Type -> Type -> Solve Substitution
-unify a b | a == b = return M.empty
-unify (TVar v) t = bind v t
-unify t (TVar v) = bind v t
-unify a@(TCon c1 ts1) b@(TCon c2 ts2)
-    | c1 /= c2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
-    | otherwise = unifyMany ts1 ts2
-unify a@(TFunc pts rt) b@(TFunc pts2 rt2)
-    | length pts /= length pts2 = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
-    | otherwise = unifyMany (rt : pts) (rt2 : pts2)
-unify (TPtr t) (TPtr t2) = unify t t2
-unify a@(TArray t) b@(TArray t2) = unify t t2
-unify a b = throwError $ "Type mismatch " ++ show a ++ " ~ " ++ show b
+unify :: SourcePos -> Type -> Type -> Solve Substitution
+unify _ a b | a == b = return M.empty
+unify pos (TVar v) t = bind pos v t
+unify pos t (TVar v) = bind pos v t
+unify pos a@(TCon c1 ts1) b@(TCon c2 ts2)
+    | c1 /= c2 = err' pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
+    | otherwise = unifyMany pos ts1 ts2
+unify pos a@(TFunc pts rt) b@(TFunc pts2 rt2)
+    | length pts /= length pts2 = err' pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
+    | otherwise = unifyMany pos (rt : pts) (rt2 : pts2)
+unify pos (TPtr t) (TPtr t2) = unify pos t t2
+unify pos a@(TArray t) b@(TArray t2) = unify pos t t2
+unify pos a b = err' pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
-unifyMany :: [Type] -> [Type] -> Solve Substitution
-unifyMany [] [] = return M.empty
-unifyMany (t1 : ts1) (t2 : ts2) =
-  do su1 <- unify t1 t2
-     su2 <- unifyMany (apply su1 ts1) (apply su1 ts2)
+unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution
+unifyMany _ [] [] = return M.empty
+unifyMany pos (t1 : ts1) (t2 : ts2) =
+  do su1 <- unify pos t1 t2
+     su2 <- unifyMany pos (apply su1 ts1) (apply su1 ts2)
      return (su2 `compose` su1)
-unifyMany t1 t2 = throwError $ "Type mismatch " ++ show (head t1) ++ " ~ " ++ show (head t2)
+unifyMany pos t1 t2 = err' pos $ "Type mismatch " ++ show (head t1) ++ " ~ " ++ show (head t2)
 
-bind :: TVar -> Type -> Solve Substitution
-bind v t
-    | v `S.member` tvs t = throwError $ "Infinite type " ++ show v ++ " ~ " ++ show t
+bind :: SourcePos -> TVar -> Type -> Solve Substitution
+bind pos v t
+    | v `S.member` tvs t = err' pos $ "Infinite type " ++ show v ++ " ~ " ++ show t
     | otherwise = return $ M.singleton v t 
 
 solve :: Substitution -> [Constraint] -> Solve Substitution
 solve s c =
     case c of
         [] -> return s
-        (CEqual t1 t2 : cs) -> do
-            s1 <- unify t1 t2
+        (CEqual pos t1 t2 : cs) -> do
+            s1 <- unify pos t1 t2
             let nsub = s1 `compose` s
             solve (s1 `compose` s) (apply s1 cs)
 
-runSolve :: [Constraint] -> Either String Substitution
+runSolve :: [Constraint] -> Either AnalyzerError Substitution
 runSolve cs = runIdentity $ runExceptT $ solve M.empty cs
 
 -- Utility
@@ -503,7 +512,14 @@ searchReturnsDecl (DStmt (SRet expr)) = return [typeOfExpr expr]
 searchReturnsDecl _ = return []
 
 searchReturnsExpr :: TypedExpr -> Infer [Type]
-searchReturnsExpr (EBlock _ decls _) = do
+searchReturnsExpr (EBlock _ _ decls _) = do
     res <- traverse searchReturnsDecl decls
     return (concat res)
 searchReturnsExpr _ = return []
+
+err :: SourcePos -> String -> Infer a
+err pos msg = throwError (AnalyzerError pos msg)
+
+err' :: SourcePos -> String -> Solve a
+err' pos msg = throwError (AnalyzerError pos msg)
+

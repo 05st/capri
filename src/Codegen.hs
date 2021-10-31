@@ -204,16 +204,16 @@ runGen mods = do
     tell "}"
 
 genModule :: TypedModule -> Gen ()
-genModule (Module name _ topLvls _) = do
+genModule (Module _ name _ topLvls _) = do
     outln ("// " <> convertName (Qualified name))
     foldr ((*>) . genTopLevel) (return ()) topLvls
 
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
-    TLFunc t name_ params _ body -> genFunction False t name_ params body
-    TLOper t _ oper_ params _ body -> genFunction True t oper_ params body
+    TLFunc t _ name_ params _ body -> genFunction False t name_ params body
+    TLOper t _ _ oper_ params _ body -> genFunction True t oper_ params body
 
-    TLType typeName tparams_ valueCons -> do
+    TLType _ typeName tparams_ valueCons -> do
         let typeName' = "_type_" <> convertName typeName
         let (conNames, conTypes) = unzip valueCons
         let conNames' = map convertName conNames
@@ -302,12 +302,12 @@ genTypeVariant typeName (conName, conTypes) = do
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
-    DVar (TArray t) _ name _ (EArray _ exprs) -> do
+    DVar (TArray t) _ _ name _ (EArray _ _ exprs) -> do
         out (convertType t <> " " <> fromText name <> "[] = {")
         sequence_ (intersperse (out ", ") (map genExpr exprs))
         outln "};"
         flushGen
-    DVar t _ name _ expr -> do
+    DVar t _ _ name _ expr -> do
         out (convertType t <> " " <> fromText name <> " = ")
         genExpr expr
         outln ";"
@@ -321,7 +321,7 @@ genStmt = \case
         genExpr expr
         outln ";"
         flushGen
-    SWhile cond body -> do
+    SWhile _ cond body -> do
         out "while ("
         genExpr cond
         outln ") {"
@@ -337,8 +337,8 @@ genStmt = \case
 
 genExpr :: TypedExpr -> Gen ()
 genExpr = \case
-    ELit _ lit -> out (genLit lit)
-    EVar _ ityps name -> do
+    ELit _ _ lit -> out (genLit lit)
+    EVar _ _ ityps name -> do
         let name' = convertName name
         polys <- gets polys
         if name `S.member` polys
@@ -347,18 +347,18 @@ genExpr = \case
                 addPolyInit ("_poly_" <> name' <> "(" <> id <> ", "<> mconcat (intersperse ", " (map convertType ityps)) <> ");")
                 out (name' <> id)
             else out name'
-    EAssign _ l r -> do
+    EAssign _ _ l r -> do
         genExpr l
         out " = "
         genExpr r
-    EBlock t decls res -> do
+    EBlock t _ decls res -> do
         cur <- collectBuffer
         flushGen
         traverse_ genDecl decls
         flushGen
         out cur
         genExpr res
-    EIf _ cond texpr fexpr -> do
+    EIf _ _ cond texpr fexpr -> do
         out "("
         genExpr cond
         out ") ? ("
@@ -366,7 +366,7 @@ genExpr = \case
         out ") : ("
         genExpr fexpr
         out ")"
-    EMatch t mexpr branches -> do
+    EMatch t _ mexpr branches -> do
         cur <- collectBuffer
 
         rvar <- tmpVar
@@ -398,7 +398,7 @@ genExpr = \case
 
         outln ""
         out (cur <> rvar)
-    EBinOp _ oper a b -> do
+    EBinOp _ _ oper a b -> do
         if extractName oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
             then do
                 genExpr a
@@ -412,35 +412,35 @@ genExpr = \case
                 out ", "
                 genExpr b
                 out ")"
-    EUnaOp _ oper expr -> do
+    EUnaOp _ _ oper expr -> do
         map <- gets operMap
         let id = (fromString . show) (fromJust $ M.lookup oper map)
         out ("_operator" <> id <> "(")
         genExpr expr
         out ")"
     EClosure {} -> throwError "no closures yet"
-    ECall _ fnexpr args -> do
+    ECall _ _ fnexpr args -> do
         genExpr fnexpr
         out "("
         sequence_ (intersperse (out ", ") (map genExpr args))
         out ")"
-    ECast _ targ expr -> do 
+    ECast _ _ targ expr -> do 
         out ("(" <> convertType targ <> ")")
         genExpr expr
-    EDeref _ expr -> do
+    EDeref _ _ expr -> do
         out "*"
         genExpr expr
-    ERef _ expr -> do
+    ERef _ _ expr -> do
         out "&"
         genExpr expr
-    ESizeof _ arg -> do
+    ESizeof _ _ arg -> do
         out "sizeof("
         case arg of
             Left typ -> do
                 out (convertType typ)
             Right expr -> genExpr expr
         out ")"
-    EArray (TArray t) exprs -> do
+    EArray (TArray t) _ exprs -> do
         cur <- collectBuffer
         tvar <- tmpVar
         out (convertType t <> " " <> tvar <> "[] = ") 
@@ -448,8 +448,8 @@ genExpr = \case
         sequence_ (intersperse (out ", ") (map genExpr exprs))
         outln "};"
         out (cur <> tvar)
-    EArray _ _ -> throwError "Analyzer error"
-    EIndex t expr idx -> do
+    EArray {} -> throwError "Analyzer error"
+    EIndex t _ expr idx -> do
         genExpr expr
         out ("[" <> (fromString . show $ idx) <> "]")
 

@@ -21,92 +21,91 @@ resolveProgram :: UntypedProgram -> Resolve UntypedProgram
 resolveProgram = traverse resolveModule
 
 resolveModule :: UntypedModule -> Resolve UntypedModule
-resolveModule (Module name imports topLvls pubs) = do
+resolveModule (Module pos name imports topLvls pubs) = do
     topLvls' <- local (const name) (traverse resolveTopLvl topLvls)
-    return (Module name imports topLvls' pubs)
+    return (Module pos name imports topLvls' pubs)
 
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
-    TLFunc t name params tann body -> do
+    TLFunc t pos name params tann body -> do
         name' <- fixName name
         body' <- resolveExpr body
-        return (TLFunc t name' params tann body')
-    TLOper t opdef name params tann body -> do
+        return (TLFunc t pos name' params tann body')
+    TLOper t pos opdef name params tann body -> do
         name' <- fixName name
         body' <- resolveExpr body
-        return (TLOper t opdef name' params tann body')
-    TLType name tvars cons -> do
+        return (TLOper t pos opdef name' params tann body')
+    TLType pos name tvars cons -> do
         name' <- fixName name
         let (conNames, conTypes) = unzip cons
         conNames' <- traverse fixName conNames
         conTypes' <- traverse (traverse resolveType) conTypes
-        return (TLType name' tvars (zip conNames' conTypes'))
+        return (TLType pos name' tvars (zip conNames' conTypes'))
     other -> return other 
 
 resolveDecl :: UntypedDecl -> Resolve UntypedDecl
 resolveDecl = \case
-    DVar t mut name tann expr -> do
+    DVar t pos mut name tann expr -> do
         expr' <- resolveExpr expr
-        return (DVar t mut name tann expr')
+        return (DVar t pos mut name tann expr')
     DStmt s -> DStmt <$> resolveStmt s
 
 resolveStmt :: UntypedStmt -> Resolve UntypedStmt
 resolveStmt = \case
     SExpr e -> SExpr <$> resolveExpr e
     SRet e -> SRet <$> resolveExpr e
-    SWhile cond e -> do
+    SWhile pos cond e -> do
         cond' <- resolveExpr cond
         e' <- resolveExpr e
-        return (SWhile cond' e')
+        return (SWhile pos cond' e')
 
 resolveExpr :: UntypedExpr -> Resolve UntypedExpr
 resolveExpr = \case
-    l@(ELit _ _) -> return l
-    EVar t gs name -> do
+    EVar t p gs name -> do
         name' <- fixName name
-        return (EVar t gs name')
-    EBinOp t name a b -> do
+        return (EVar t p gs name')
+    EBinOp t p name a b -> do
         name' <- fixName name
         a' <- resolveExpr a
         b' <- resolveExpr b
-        return (EBinOp t name' a' b')
-    EUnaOp t name a -> do   
+        return (EBinOp t p name' a' b')
+    EUnaOp t p name a -> do   
         name' <- fixName name
         a' <- resolveExpr a
-        return (EUnaOp t name' a')
-    EBlock t decls res -> do
+        return (EUnaOp t p name' a')
+    EBlock t p decls res -> do
         decls' <- traverse resolveDecl decls
         res' <- resolveExpr res
-        return (EBlock t decls' res')
-    EAssign t l r -> do
+        return (EBlock t p decls' res')
+    EAssign t p l r -> do
         l' <- resolveExpr l
         r' <- resolveExpr r
-        return (EAssign t l' r')
-    EIf t cond a b -> do
+        return (EAssign t p l' r')
+    EIf t p cond a b -> do
         cond' <- resolveExpr cond
         a' <- resolveExpr a
         b' <- resolveExpr b
-        return (EIf t cond' a' b')
-    EMatch t mexpr branches -> do
+        return (EIf t p cond' a' b')
+    EMatch t p mexpr branches -> do
         let (bpats, bexprs) = unzip branches
         bpats' <- traverse resolvePattern bpats
         bexprs' <- traverse resolveExpr bexprs
         mexpr' <- resolveExpr mexpr
-        return (EMatch t mexpr' (zip bpats' bexprs'))
-    EClosure t cvars params tann body -> do 
+        return (EMatch t p mexpr' (zip bpats' bexprs'))
+    EClosure t p cvars params tann body -> do 
         body' <- resolveExpr body
-        return (EClosure t cvars params tann body')
-    ECall t cexpr args -> do
+        return (EClosure t p cvars params tann body')
+    ECall t p cexpr args -> do
         args' <- traverse resolveExpr args
         cexpr' <- resolveExpr cexpr
-        return (ECall t cexpr' args')
-    ECast t targ arg -> ECast t targ <$> resolveExpr arg
-    EDeref t expr -> EDeref t <$> resolveExpr expr
-    ERef t expr -> ERef t <$> resolveExpr expr
-    ESizeof t (Right expr) -> ESizeof t . Right <$> resolveExpr expr
-    e@(ESizeof _ _) -> return e
-    EArray t exprs -> EArray t <$> traverse resolveExpr exprs
-    EIndex t expr idx -> flip (EIndex t) idx <$> resolveExpr expr
+        return (ECall t p cexpr' args')
+    ECast t p targ arg -> ECast t p targ <$> resolveExpr arg
+    EDeref t p expr -> EDeref t p <$> resolveExpr expr
+    ERef t p expr -> ERef t p <$> resolveExpr expr
+    ESizeof t p (Right expr) -> ESizeof t p . Right <$> resolveExpr expr
+    EArray t p exprs -> EArray t p <$> traverse resolveExpr exprs
+    EIndex t p expr idx -> flip (EIndex t p) idx <$> resolveExpr expr
+    a -> return a
 
 resolvePattern :: Pattern -> Resolve Pattern
 resolvePattern = \case

@@ -7,6 +7,8 @@ module Type where
 import Data.Text (Text, unpack)
 import Data.List
 
+import Text.Megaparsec.Pos
+
 import Name
 
 newtype TVar = TV Text deriving (Show, Eq, Ord)
@@ -18,7 +20,7 @@ data Type
     | TArray Type
     deriving (Eq, Ord)
 
-data Constraint = CEqual Type Type deriving (Show)
+data Constraint = CEqual SourcePos Type Type deriving (Show)
 data TypeScheme = Forall [TVar] Type deriving (Show)
 
 pattern TInt8 = TCon (Unqualified "i8") []
