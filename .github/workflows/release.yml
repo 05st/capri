@@ -1,0 +1,83 @@
+name: Release
+
+defaults:
+  run:
+    shell: bash
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["8.10.7"]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v2
+    
+      - uses: haskell/actions/setup@v1
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: "3.2"
+
+      - name: Windows Setup
+        if: matrix.os == 'windows-latest'
+        env:
+          GHC_VER: ${{ matrix.ghc }}
+        run: |
+          echo "EXE_EXT=.exe" >> $GITHUB_ENV
+          GHC_VER=$(echo $GHC_VER | sed 's/8.10.2.2/8.10.2/g')
+          echo "GHC_VERSION=$GHC_VER" >> $GITHUB_ENV
+
+      - name: Linux Setup
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          GHC_VER: ${{ matrix.ghc }}
+        run: |
+          echo "LINUX_CABAL_ARGS=--datadir=$HOME/.juno" >> $GITHUB_ENV
+          echo "GHC_VERSION=$GHC_VER" >> $GITHUB_ENV
+        
+      - name: MacOS Setup
+        if: matrix.os == 'macOS-latest'
+        env:
+          GHC_VER: ${{ matrix.ghc }}
+        run: |
+          echo "GHC_VERSION=$GHC_VER" >> $GITHUB_ENV
+      
+      - name: Build
+        run: |
+          cabal build exe:juno -O2 $LINUX_CABAL_ARGS
+          
+      - name: Compress Binary
+        id: compress_binary
+        run: |
+          JUNO_BUILD=$(find dist-newstyle \( -name 'juno' -o -name 'juno.exe' \) -type f)
+          JUNO=juno-${{env.GHC_VERSION}}
+          mv $JUNO_BUILD $JUNO${{env.EXE_EXT}}
+          if [[ "$OSTYPE" == "msys" ]]; then
+            7z a $JUNO.zip $JUNO${{env.EXE_EXT}}
+            echo ::set-output name=path::$JUNO.zip
+            echo ::set-output name=content_type::application/zip
+            echo ::set-output name=extension::zip
+          else
+            gzip --best $JUNO
+            echo ::set-output name=path::$JUNO.gz
+            echo ::set-output name=content_type::application/gzip
+            echo ::set-output name=extension::gz
+          fi
+          
+      - name: Upload Binary
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ steps.compress_binary.outputs.path }}
+          asset_name: juno-${{ runner.OS }}-${{ env.GHC_VERSION }}${{env.EXE_EXT}}.${{ steps.compress_binary.outputs.extension }}
+          asset_content_type: ${{ steps.compress_binary.outputs.content_type }}
