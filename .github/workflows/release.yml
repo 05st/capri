@@ -52,7 +52,7 @@ jobs:
       
       - name: Build
         run: |
-          cabal build exe:juno -O2 $LINUX_CABAL_ARGS
+          cabal build exe:juno-exe -O2 $LINUX_CABAL_ARGS
           
       - name: Compress Binary
         id: compress_binary
