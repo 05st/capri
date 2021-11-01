@@ -12,8 +12,3 @@ fn main() {
     };
     printf("%d\n", test);
 };
-
-struct Example<a, b> {
-    a: i32,
-    b: str
-};
