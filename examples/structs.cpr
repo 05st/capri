@@ -8,9 +8,10 @@ struct Example {
 };
 
 fn main() {
-    var := Example {
+    mut var := Example {
         field = "test",
         xyz = false
     };
+    var.field = "changed";
     println(var.field);
 };

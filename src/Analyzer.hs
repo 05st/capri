@@ -309,12 +309,16 @@ inferExpr = \case
         constrain (CEqual pos ltype rtype)
         let expr' = EAssign ltype pos l' r'
         case l' of
-            EVar _ _ _ name -> do
-                isMut <- lookupMut pos name
+            EVar _ vpos _ name -> do
+                isMut <- lookupMut vpos name
                 unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
-            EIndex _ _ (EVar _ vpos _ name) idx -> do
-                isMut <- lookupMut pos name
+            EIndex _ _ (EVar _ vpos _ name) _ -> do
+                isMut <- lookupMut vpos name
+                unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
+                return (expr', ltype)
+            EAccess _ _ (EVar _ vpos _ name) _ -> do
+                isMut <- lookupMut vpos name
                 unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
             EDeref {} -> return (expr', ltype)

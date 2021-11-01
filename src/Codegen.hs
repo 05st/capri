@@ -352,7 +352,7 @@ genStmt = \case
 genExpr :: TypedExpr -> Gen ()
 genExpr = \case
     ELit _ _ lit -> out (genLit lit)
-    EVar _ _ ityps name -> do
+    EVar t _ ityps name -> do
         let name' = convertName name
         polys <- gets polys
         if name `S.member` polys
