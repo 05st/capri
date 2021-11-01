@@ -25,7 +25,7 @@ import Name
 
 import Resolver
 
-type AEnv = M.Map Name (TypeScheme, Bool)
+type Env = M.Map Name (TypeScheme, Bool)
 
 data AnalyzerError = AnalyzerError SourcePos String
 type Infer = RWST [Import] [Constraint] InferState (Except AnalyzerError)
@@ -34,7 +34,8 @@ instance Show AnalyzerError where
     show (AnalyzerError pos msg) = sourcePosPretty pos ++ "\n\t" ++ msg
 
 data InferState = InferState
-    { environment :: AEnv
+    { environment :: Env
+    , structMap :: M.Map Name [(Text, Type)]
     , freshCount :: Int
     , topLvlTmps :: M.Map Name Type
     , mainExists :: Bool
@@ -60,7 +61,7 @@ fresh = do
     where
         names = map ('_' :) ([1..] >>= flip replicateM ['a'..'z'])
 
-generalize :: AEnv -> Type -> TypeScheme
+generalize :: Env -> Type -> TypeScheme
 generalize env t = Forall (S.toList vs) t
     where vs = tvs t `S.difference` tvs (map fst $ M.elems env)
 
@@ -74,6 +75,7 @@ runInfer :: UntypedProgram -> Either AnalyzerError TypedProgram
 runInfer prog =
     let defaultState = InferState
             { environment = M.empty
+            , structMap = M.empty
             , freshCount = 0
             , topLvlTmps = M.empty
             , mainExists = False
@@ -120,6 +122,12 @@ generatePubVar = \case
         let (conNames, _) = unzip cons
         vars <- traverse (const fresh) conNames
         return (zip conNames vars)
+    TLStruct _ name _ fields -> do
+        state <- get
+        put (state { structMap = M.insert name fields (structMap state) }) -- also add entry to struct-labels map
+
+        var <- fresh
+        return [(name, var)]
 
 inferModule :: UntypedModule -> Infer TypedModule
 inferModule (Module pos name imports topLvls pubs) = do
@@ -145,6 +153,27 @@ insertTmpVars = \case
 
     TLType pos typeName typeParams cons -> insertValueCons pos typeName typeParams cons
 
+    TLStruct pos name typeParams fields -> do
+        let (labels, types) = unzip fields
+        if any (checkInfiniteType name) types
+            then err pos $ "Infinite type " ++ show name
+            else do
+                let varsTypeParams = S.fromList typeParams
+                let varsTypes = tvs types
+                let typeParams' = map TVar typeParams
+
+                if (varsTypeParams `S.intersection` varsTypes) /= varsTypes
+                    then let undefineds = S.toList (varsTypes `S.difference` varsTypeParams)
+                         in err pos ("Undefined type variables " ++ show undefineds)
+                    else let typ = TFunc types (TCon name typeParams')
+                             scheme = Forall [] typ
+                         in do
+                            pubsEnv <- gets pubsEnv
+                            case M.lookup name pubsEnv of
+                                Just t -> constrain (CEqual pos typ t)
+                                Nothing -> return ()
+                            insertEnv (name, (scheme, False))
+
     TLExtern name ptypes rtype -> insertEnv (Unqualified name, (Forall [] $ TFunc ptypes rtype, False))
 
 insertValueCons :: SourcePos -> Name -> [TVar] -> [(Name, [Type])] -> Infer ()
@@ -153,11 +182,11 @@ insertValueCons pos typeName typeParams ((conName, conTypes) : restCons) = do
     if any (checkInfiniteType typeName) conTypes
         then err pos $ "Infinite type " ++ show typeName ++ " (con. " ++ show conName ++ ")"
         else do
-            let typeParams' = map TVar typeParams
-            let varsTypeParams = tvs typeParams'
+            let varsTypeParams = S.fromList typeParams
             let varsCon = tvs conTypes
+            let typeParams' = map TVar typeParams
 
-            env <- gets environment
+            -- env <- gets environment
             if (varsTypeParams `S.intersection` varsCon) /= varsCon
                 then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
                      in err pos ("Undefined type variables " ++ show undefineds)
@@ -165,11 +194,17 @@ insertValueCons pos typeName typeParams ((conName, conTypes) : restCons) = do
                             [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
                             _ -> TFunc conTypes (TCon typeName typeParams') --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
                          scheme = Forall [] typ
-                     in insertEnv (conName, (scheme, False)) *> insertValueCons pos typeName typeParams restCons
-    where
-        checkInfiniteType typeName (TCon name _) = name == typeName
-        checkInfiniteType typeName (TArray t) = checkInfiniteType typeName t
-        checkInfiniteType _ _ = False
+                     in do
+                        pubsEnv <- gets pubsEnv
+                        case M.lookup conName pubsEnv of
+                            Just t -> constrain (CEqual pos typ t)
+                            Nothing -> return ()
+                        insertEnv (conName, (scheme, False)) *> insertValueCons pos typeName typeParams restCons
+
+checkInfiniteType :: Name -> Type -> Bool
+checkInfiniteType typeName (TCon name _) = name == typeName
+checkInfiniteType typeName (TArray t) = checkInfiniteType typeName t
+checkInfiniteType _ _ = False
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
@@ -194,6 +229,7 @@ inferTopLvl = \case
             return (TLOper typ pos opdef oper params rtann body')
 
     TLType pos typeName typeParams cons -> return (TLType pos typeName typeParams cons)
+    TLStruct pos name typeParams fields -> return (TLStruct pos name typeParams fields)
     TLExtern name ptypes rtype -> return (TLExtern name ptypes rtype)
 
 inferFn :: SourcePos -> Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
@@ -377,6 +413,32 @@ inferExpr = \case
         constrain (CEqual pos typ etype)
         return (EIndex tv pos expr' idx, tv)
 
+    EStruct _ pos structName fields -> do
+        let (labels, exprs) = unzip fields
+        (exprs', ets) <- unzip <$> traverse inferExpr exprs
+        (typ, newName) <- lookupType pos structName
+        rt <- fresh
+        constrain (CEqual pos typ (TFunc ets rt))
+
+        structMap <- gets structMap
+        let (labels', _) = unzip $ fromJust (M.lookup newName structMap) -- struct labels should be defined if its type was
+        
+        if labels /= labels'
+            then err pos ("Invalid/missing field names when instancing struct " ++ show structName)
+            else return (EStruct rt pos newName (zip labels exprs'), rt)
+
+    EAccess _ pos expr label -> do
+        (expr', et) <- inferExpr expr
+        case et of
+            TCon name tparams -> do
+                structMap <- gets structMap
+                let entry = M.lookup name structMap
+                unless (isJust entry) (err pos (show name ++ " is not a struct"))
+                case lookup label (fromJust entry) of
+                    Just t -> return (EAccess t pos expr' label, t)
+                    Nothing -> err pos ("Struct " ++ show name ++ " has no field '" ++ show label ++ "'")
+            _ -> err pos ("Unable to infer type of expression; please provide type annotations (accessing " ++ show label ++ ")")
+
 inferLit :: Lit -> Type
 inferLit = \case
     LInt _ -> TInt32
@@ -414,7 +476,7 @@ inferPattern pos (PCon conName binds) = do
     return (t, res)
 
 -- Environment helpers
-scoped :: (AEnv -> AEnv) -> Infer a -> Infer a
+scoped :: (Env -> Env) -> Infer a -> Infer a
 scoped fn m = do
     state <- get
     let env = environment state
@@ -522,4 +584,3 @@ err pos msg = throwError (AnalyzerError pos msg)
 
 err' :: SourcePos -> String -> Solve a
 err' pos msg = throwError (AnalyzerError pos msg)
-

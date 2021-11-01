@@ -18,6 +18,8 @@ import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
 
+import Debug.Trace
+
 import Syntax
 import Type
 import Name
@@ -214,7 +216,7 @@ genTopLevel = \case
     TLOper t _ _ oper_ params _ body -> genFunction True t oper_ params body
 
     TLType _ typeName tparams_ valueCons -> do
-        let typeName' = "_type_" <> convertName typeName
+        let typeName' = "_t_" <> convertName typeName
         let (conNames, conTypes) = unzip valueCons
         let conNames' = map convertName conNames
 
@@ -235,6 +237,18 @@ genTopLevel = \case
             "typedef struct " <> typeName' <> " {\n"
             <> "\t" <> typeName' <> "Tag tag;\n"
             <> "\t" <> typeName' <> "Variants data;\n"
+            <> "} " <> typeName' <> ";\n"
+
+        addForwardDecl ("typedef struct " <> typeName' <> " " <> typeName' <> ";")
+
+    TLStruct _ structName tparams fields -> do
+        let typeName' = "_t_" <> convertName structName
+        let (labels, types) = unzip fields
+        let labels' = map fromText labels
+
+        addTypedef $
+            "typedef struct " <> typeName' <> " {\n"
+            <> mconcat ["\t" <> convertType typ <> " " <> label <> ";\n" | (typ, label) <- zip types labels']
             <> "} " <> typeName' <> ";\n"
 
         addForwardDecl ("typedef struct " <> typeName' <> " " <> typeName' <> ";")
@@ -261,7 +275,7 @@ genFunction isOper t@(TFunc ptypes rtype) name_ params body = do
     let paramsText = mconcat (intersperse ", " $ [ptypeC <> " " <> fromText pname | (pname, ptypeC) <- zip pnames ptypes'])
 
     fnDecl <- if isOper
-        then addOperEntry name_ >>= \id -> return (rtypeC <> " _operator" <> fromString (show id) <> "(" <> paramsText <> ")")
+        then addOperEntry name_ >>= \id -> return (rtypeC <> " _op_" <> fromString (show id) <> "(" <> paramsText <> ")")
         else return (rtypeC <> " " <> name <> "(" <> paramsText <> ")")
 
     outln (fnDecl <> " {")
@@ -407,7 +421,7 @@ genExpr = \case
             else do
                 map <- gets operMap
                 let id = (fromString . show) (fromJust $ M.lookup oper map)
-                out ("_operator" <> id <> "(")
+                out ("_op_" <> id <> "(")
                 genExpr a
                 out ", "
                 genExpr b
@@ -415,7 +429,7 @@ genExpr = \case
     EUnaOp _ _ oper expr -> do
         map <- gets operMap
         let id = (fromString . show) (fromJust $ M.lookup oper map)
-        out ("_operator" <> id <> "(")
+        out ("_op_" <> id <> "(")
         genExpr expr
         out ")"
     EClosure {} -> throwError "no closures yet"
@@ -452,6 +466,13 @@ genExpr = \case
     EIndex t _ expr idx -> do
         genExpr expr
         out ("[" <> (fromString . show $ idx) <> "]")
+    EStruct _ _ structName fields -> do
+        out ("(_t_" <> convertName structName <> "){")
+        sequence_ (intersperse (out ", ") [out ("." <> fromText label <> " = ") *> genExpr expr | (label, expr) <- fields])
+        out "}"
+    EAccess t _ expr label -> do
+        genExpr expr
+        out ("." <> fromText label)
 
 genMatchBranches :: Type -> Builder -> Builder -> [(Pattern, TypedExpr)] -> Gen ()
 genMatchBranches mvarType rvar mvar [branch] = genMatchBranch mvarType rvar mvar branch
@@ -523,7 +544,7 @@ convertType = \case
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"
-    TCon name [] -> "_type_" <> convertName name
+    TCon name [] -> "_t_" <> convertName name
     a@(TArray t) -> convertType t <> singleton '*'
         {-
         tstr <- convertType t

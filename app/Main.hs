@@ -42,7 +42,7 @@ main :: IO ()
 main = runOpts =<< execParser (options `withInfo` infoString)
     where 
         withInfo opts desc = info (helper <*> opts) $ progDesc desc
-        infoString = "Juno compiler"
+        infoString = "Capri compiler"
 
 readDir :: FilePath -> IO [(String, T.Text)]
 readDir path = do

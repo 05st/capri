@@ -48,4 +48,4 @@ instance Show Type where
         TFunc pts rt -> intercalate ", " (map show pts) ++ " -> " ++ show rt
         TVar (TV var) -> unpack var
         TPtr t -> show t ++ "*"
-        TArray t -> show t ++ "[]"
+        TArray t -> "[]" ++ show t

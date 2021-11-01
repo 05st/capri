@@ -6,8 +6,8 @@ Takes inspiration from languages such as Rust or Haskell.
 ![Latest Release](https://img.shields.io/github/v/release/05st/capri?include_prereleases)
 
 ## Features
-- Type inference (no type annotations required)
-- Algebraic data types
+- Type inference
+- Algebraic data types (including structs)
 - Recursively defined types
 - User definable prefix, infix, and postfix operators
 - Pattern matching

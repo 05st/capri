@@ -41,7 +41,7 @@ parseModule = do
 
 -- Top Level Declarations
 topLvlDecl :: Parser UntypedTopLvl
-topLvlDecl = try topLvlFuncDecl <|> try topLvlOperDecl <|> topLvlExternDecl <|> topLvlTypeDecl
+topLvlDecl = try topLvlFuncDecl <|> try topLvlOperDecl <|> try topLvlTypeDecl <|> topLvlStructDecl <|> topLvlExternDecl
 
 topLvlFuncDecl :: Parser UntypedTopLvl
 topLvlFuncDecl = do
@@ -113,6 +113,21 @@ topLvlTypeDecl = do
             types <- option [] (parens (sepBy type' comma))
             return (Unqualified conName, types)
 
+topLvlStructDecl :: Parser UntypedTopLvl
+topLvlStructDecl = do
+    pos <- getSourcePos
+    isPub <- option False (True <$ reserved "pub")
+    reserved "struct"
+    structName <- typeIdentifier
+    typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
+    fields <- braces (sepBy1 field comma)
+    semi
+
+    S.when isPub (addPub structName)
+    return (TLStruct pos (Unqualified structName) typeParams fields)
+    where
+        field = (,) <$> identifier <*> typeAnnot
+
 -- Declarations
 declaration :: Parser UntypedDecl
 declaration = try varDecl <|> (DStmt <$> statement)
@@ -166,7 +181,7 @@ expression = do
         postfixOp name f = Postfix (reservedOp name >> return f)
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try index <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try access <|> try index <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -201,9 +216,16 @@ closure = do
 assign :: Parser UntypedExpr
 assign = do
     pos <- getSourcePos
-    var <- deref <|> try index <|> value 
+    var <- deref <|> try index <|> try access <|> value 
     reservedOp "="
     EAssign () pos var <$> expression
+
+access :: Parser UntypedExpr
+access = do
+    pos <- getSourcePos 
+    expr <- value
+    reservedOp "."
+    EAccess () pos expr <$> identifier
 
 index :: Parser UntypedExpr
 index = do
@@ -227,7 +249,7 @@ ref = do
 value :: Parser UntypedExpr
 value = do
     pos <- getSourcePos 
-    array <|> (try sizeof <|> try cast <|> try call) <|> (ELit () pos <$> literal) <|> try variable <|> try block <|> parens expression
+    array <|> (try sizeof <|> try cast <|> try call <|> try structCreate) <|> (ELit () pos <$> literal) <|> try variable <|> try block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -248,6 +270,13 @@ call = do
     id <- identifier -- TODO
     args <- parens (sepBy expression comma)
     return $ ECall () pos (EVar () pos [] . Unqualified $ id) args
+
+structCreate :: Parser UntypedExpr
+structCreate = do
+    pos <- getSourcePos
+    structName <- typeIdentifier
+    fields <- braces (sepBy1 ((,) <$> identifier <*> (reservedOp "=" *> expression)) comma)
+    return (EStruct () pos (Unqualified structName) fields)
 
 variable :: Parser UntypedExpr
 variable = do
@@ -280,7 +309,7 @@ integer = try octal <|> try binary <|> try hexadecimal <|> signedInteger
 
 -- Parse types
 type' :: Parser Type
-type' = try typeFunc <|> try typeArray <|> try typeCon <|> typeBase
+type' = typeArray <|> try typeCon <|> try typeFunc <|> typeBase
 
 typeFunc :: Parser Type
 typeFunc = do
@@ -290,9 +319,10 @@ typeFunc = do
 
 typeArray :: Parser Type
 typeArray = do
-    t <- try typeCon <|> typeBase
     brackets sc
-    return (TArray t)
+    t <- try typeCon <|> typeBase
+    let typ = TArray t
+    option typ (TPtr typ <$ symbol "*")
 
 typeCon :: Parser Type
 typeCon = do
@@ -331,13 +361,10 @@ patternLit = PLit <$> literal
 
 -- Other
 typeAnnot :: Parser Type
-typeAnnot = symbol ":" *> type'
+typeAnnot = colon *> type'
 
 params :: Parser [(Text, Maybe Type)]
 params = parens (sepBy ((,) <$> identifier <*> optional typeAnnot) comma)
-
--- Utility
-
 
 -- Run parser
 parse :: [(String, Text)] -> Either String UntypedProgram

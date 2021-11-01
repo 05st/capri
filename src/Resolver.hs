@@ -41,13 +41,19 @@ resolveTopLvl = \case
         conNames' <- traverse fixName conNames
         conTypes' <- traverse (traverse resolveType) conTypes
         return (TLType pos name' tvars (zip conNames' conTypes'))
-    other -> return other 
+    TLStruct pos name tvars fields -> do
+        name' <- fixName name
+        return (TLStruct pos name' tvars fields)
+    a -> return a
 
 resolveDecl :: UntypedDecl -> Resolve UntypedDecl
 resolveDecl = \case
     DVar t pos mut name tann expr -> do
         expr' <- resolveExpr expr
-        return (DVar t pos mut name tann expr')
+        tann' <- case tann of
+            Just t -> Just <$> resolveType t
+            Nothing -> return Nothing
+        return (DVar t pos mut name tann' expr')
     DStmt s -> DStmt <$> resolveStmt s
 
 resolveStmt :: UntypedStmt -> Resolve UntypedStmt
@@ -105,6 +111,8 @@ resolveExpr = \case
     ESizeof t p (Right expr) -> ESizeof t p . Right <$> resolveExpr expr
     EArray t p exprs -> EArray t p <$> traverse resolveExpr exprs
     EIndex t p expr idx -> flip (EIndex t p) idx <$> resolveExpr expr
+    EStruct t p structName fields -> flip (EStruct t p) fields <$> fixName structName
+    EAccess t p expr label -> flip (EAccess t p) label <$> resolveExpr expr
     a -> return a
 
 resolvePattern :: Pattern -> Resolve Pattern
@@ -112,7 +120,7 @@ resolvePattern = \case
     PCon name binds -> do
         name' <- fixName name
         return (PCon name' binds)
-    other -> return other
+    a -> return a
 
 resolveType :: Type -> Resolve Type
 resolveType = \case
@@ -122,7 +130,7 @@ resolveType = \case
     TFunc ptypes rtype -> do
         ptypes' <- traverse resolveType ptypes
         TFunc ptypes' <$> resolveType rtype
-    other -> return other
+    a -> return a
 
 fixName :: Name -> Resolve Name
 fixName name = do

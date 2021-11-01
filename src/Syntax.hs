@@ -27,6 +27,7 @@ data TopLvl a
     | TLOper a SourcePos OperatorDef Name Params TypeAnnot (Expr a)
     | TLExtern Text [Type] Type
     | TLType SourcePos Name [TVar] [(Name, [Type])]
+    | TLStruct SourcePos Name [TVar] [(Text, Type)]
     deriving (Show, Functor)
 
 data Decl a
@@ -57,6 +58,8 @@ data Expr a
     | ESizeof a SourcePos (Either Type (Expr a))
     | EArray a SourcePos [Expr a]
     | EIndex a SourcePos (Expr a) Int
+    | EStruct a SourcePos Name [(Text, Expr a)]
+    | EAccess a SourcePos (Expr a) Text
     deriving (Show, Functor)
 
 data Lit
@@ -106,3 +109,5 @@ typeOfExpr = \case
     ESizeof t _ _ -> t
     EArray t _ _ -> t
     EIndex t _ _ _ -> t
+    EStruct t _ _ _ -> t
+    EAccess t _ _ _ -> t

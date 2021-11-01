@@ -1,0 +1,16 @@
+module main;
+
+import io;
+
+struct Example {
+    field: str,
+    xyz: bool
+};
+
+fn main() {
+    var := Example {
+        field = "test",
+        xyz = false
+    };
+    println(var.field);
+};
