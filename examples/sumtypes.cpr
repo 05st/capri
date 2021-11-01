@@ -17,5 +17,3 @@ struct Example<a, b> {
     a: i32,
     b: str
 };
-
-Example{ a = 5, b = "lol" };
