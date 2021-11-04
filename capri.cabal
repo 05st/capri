@@ -49,6 +49,7 @@ library
     , process
     , temporary
     , text
+    , uniplate
   default-language: Haskell2010
 
 executable capri-exe
@@ -70,6 +71,7 @@ executable capri-exe
     , process
     , temporary
     , text
+    , uniplate
   default-language: Haskell2010
 
 test-suite capri-test
@@ -92,4 +94,5 @@ test-suite capri-test
     , process
     , temporary
     , text
+    , uniplate
   default-language: Haskell2010

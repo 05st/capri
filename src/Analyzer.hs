@@ -10,6 +10,8 @@ import Data.Maybe
 import Data.Functor.Identity
 import Data.Foldable (traverse_)
 import Data.Bifunctor
+import Data.Data
+import Data.Generics.Uniplate.Data
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.RWS
@@ -29,7 +31,7 @@ import Resolver
 type Env = M.Map Name (TypeScheme, Bool)
 
 data AnalyzerError = AnalyzerError SourcePos String
-type Infer = RWST [Import] [Constraint] InferState (Except AnalyzerError)
+type Infer = RWST [Import] () InferState (Except AnalyzerError)
 
 instance Show AnalyzerError where   
     show (AnalyzerError pos msg) = sourcePosPretty pos ++ "\n\t" ++ msg
@@ -42,6 +44,7 @@ data InferState = InferState
     , mainExists :: Bool
     , modulePubs :: M.Map [Text] [Text]
     , pubsEnv :: M.Map Name Type
+    , constraints :: [Constraint]
     } deriving (Show)
 
 analyze :: UntypedProgram -> Either String TypedProgram 
@@ -51,7 +54,9 @@ analyze prog = case (runInfer . resolve) prog of
 
 -- Type Inference
 constrain :: Constraint -> Infer ()
-constrain = tell . (: [])
+constrain const = do
+    state <- get
+    put (state { constraints = const : constraints state })
 
 fresh :: Infer Type
 fresh = do
@@ -82,11 +87,12 @@ runInfer prog =
             , mainExists = False
             , modulePubs = M.empty
             , pubsEnv = M.empty
+            , constraints = []
             } in
     case runIdentity $ runExceptT $ runRWST (inferProgram prog) [] defaultState of
         Left err -> Left err
-        Right (prog', _, consts) -> do
-            sub <- runSolve consts
+        Right (prog', state, _) -> do
+            sub <- runSolve (constraints state)
             return $ fmap (fmap $ apply sub) prog'
 
 inferProgram :: UntypedProgram -> Infer TypedProgram
@@ -193,7 +199,7 @@ insertValueCons pos typeName typeParams ((conName, conTypes) : restCons) = do
                      in err pos ("Undefined type variables " ++ show undefineds)
                 else let typ = case conTypes of
                             [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
-                            _ -> TFunc conTypes (TCon typeName typeParams') --generalize env (TFunc (TParam ttypeParams' (TCon typeName))
+                            _ -> TFunc conTypes (TCon typeName typeParams') -- generalize env (TFunc (TParam ttypeParams' (TCon typeName))
                          scheme = Forall [] typ
                      in do
                         pubsEnv <- gets pubsEnv
@@ -237,9 +243,12 @@ inferFn :: SourcePos -> Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (Typ
 inferFn pos name params rtann body = do
     let (pnames, panns) = unzip params
     ptypes <- traverse (const fresh) params
+    sequence_ [when (isJust pann) (constrain $ CEqual pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes panns]
+
     let ptypesSchemes = map ((, False) . Forall []) ptypes
     let nenv = M.fromList (zip (map Unqualified pnames) ptypesSchemes)
-    ((body', rtype), consts) <- listen (scoped (`M.union` nenv) (inferExpr body))
+    (body', rtype) <- scoped (`M.union` nenv) (inferExpr body)
+    consts <- gets constraints
 
     subst <- liftEither (runSolve consts)
     env <- gets environment
@@ -250,7 +259,7 @@ inferFn pos name params rtann body = do
     when (isJust rtann) (constrain $ CEqual pos rtype' (fromJust rtann))
     sequence_ [when (isJust pann) (constrain $ CEqual pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes' panns]
 
-    -- traverse_ (constrain . CEqual pos rtype') (searchReturnsExpr body')
+    traverse_ (constrain . CEqual pos rtype') (searchReturns body')
 
     state <- get
     let tmpsEnv = topLvlTmps state
@@ -270,7 +279,8 @@ inferDecl = \case
         alreadyDefined <- exists (Unqualified name)
         if alreadyDefined then err pos ("Variable '" ++ unpack name ++ "' already defined")
         else do
-            ((expr', etype), consts) <- listen (inferExpr expr)
+            (expr', etype) <- inferExpr expr
+            consts <- gets constraints
             subst <- liftEither (runSolve consts)
             env <- ask
             let typ = apply subst etype
@@ -432,7 +442,8 @@ inferExpr = \case
             else return (EStruct rt pos newName (zip labels exprs'), rt)
 
     EAccess _ pos expr label -> do
-        ((expr', et), consts) <- listen (inferExpr expr)
+        (expr', et)  <- inferExpr expr
+        consts <- gets constraints
         subst <- liftEither (runSolve consts)
         let typ = apply subst et
 
@@ -572,3 +583,16 @@ runSolve cs = runIdentity $ runExceptT $ solve M.empty cs
 -- Utility
 err :: (MonadError AnalyzerError m) => SourcePos -> String -> m a
 err pos msg = throwError (AnalyzerError pos msg)
+
+searchReturns :: TypedExpr -> [Type]
+searchReturns = exprs
+    where
+        exprs = concatMap exprsF . universe
+        exprsF (EBlock _ _ ds _) = concatMap decls ds
+        exprsF x = []
+        decls = concatMap declsF . universe
+        declsF (DStmt s) = stmts s
+        declsF x = []
+        stmts = concatMap stmtsF . universe
+        stmtsF (SRet e) = [typeOfExpr e]
+        stmtsF x = []

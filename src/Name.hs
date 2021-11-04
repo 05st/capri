@@ -1,10 +1,13 @@
+{-# Language DeriveDataTypeable #-}
+
 module Name where
 
 import Data.Text (Text, unpack)
 import Data.List
+import Data.Data
 
 data Name = Qualified [Text] | Unqualified Text
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Data, Typeable)
 
 extractName :: Name -> Text
 extractName (Qualified qual) = last qual

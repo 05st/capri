@@ -29,6 +29,7 @@ dependencies:
 - optparse-applicative
 - temporary
 - process
+- uniplate
 
 library:
   source-dirs: src

@@ -1,23 +1,25 @@
 {-# Language LambdaCase #-}
 {-# Language OverloadedStrings #-}
 {-# Language PatternSynonyms #-}
+{-# Language DeriveDataTypeable #-}
 
 module Type where
 
 import Data.Text (Text, unpack)
 import Data.List
+import Data.Data
 
 import Text.Megaparsec.Pos
 
 import Name
 
-newtype TVar = TV Text deriving (Show, Eq, Ord)
+newtype TVar = TV Text deriving (Show, Eq, Ord, Data, Typeable)
 data Type
     = TCon Name [Type]
     | TVar TVar
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Data, Typeable)
 
-data Constraint = CEqual SourcePos Type Type deriving (Show)
+data Constraint = CEqual SourcePos Type Type
 data TypeScheme = Forall [TVar] Type deriving (Show)
 
 pattern TInt8 = TCon (Unqualified "i8") []
@@ -50,3 +52,6 @@ instance Show Type where
         TCon con [] -> show con
         TCon con ts -> show con ++ "<" ++ intercalate ", " (map show ts) ++ ">"
         TVar (TV var) -> unpack var
+
+instance Show Constraint where
+    show (CEqual _ a b) = show a ++ " ~ " ++ show b

@@ -3,10 +3,12 @@
 {-# Language OverloadedStrings #-}
 {-# Language LambdaCase #-}
 {-# Language TupleSections #-}
+{-# Language DeriveDataTypeable #-}
 
 module Syntax where
 
 import Data.Text (Text)
+import Data.Data
 
 import Text.Megaparsec.Pos
 
@@ -17,8 +19,13 @@ import Name
 type Program a = [Module a]
 
 type Import = [Text]
-data Module a = Module SourcePos [Text] [Import] [TopLvl a] [Text]
-    deriving (Show, Functor)
+data Module a = Module
+    { modSourcePos :: SourcePos
+    , modFullName :: [Text]
+    , modImports :: [Import]
+    , modTopLvls :: [TopLvl a]
+    , modPubs :: [Text]
+    } deriving (Show, Functor)
 
 type TypeAnnot = Maybe Type
 type Params = [(Text, TypeAnnot)]
@@ -33,13 +40,13 @@ data TopLvl a
 data Decl a
     = DVar a SourcePos Bool Text TypeAnnot (Expr a)
     | DStmt (Stmt a)
-    deriving (Show, Functor)
+    deriving (Show, Functor, Data, Typeable)
 
 data Stmt a
     = SExpr (Expr a)
     | SRet (Expr a)
     | SWhile SourcePos (Expr a) (Expr a)
-    deriving (Show, Functor)
+    deriving (Show, Functor, Data, Typeable)
 
 data Expr a
     = ELit a SourcePos Lit
@@ -60,7 +67,7 @@ data Expr a
     | EIndex a SourcePos (Expr a) Int
     | EStruct a SourcePos Name [(Text, Expr a)]
     | EAccess a SourcePos (Expr a) Text
-    deriving (Show, Functor)
+    deriving (Show, Functor, Data, Typeable)
 
 data Lit
     = LInt Integer
@@ -69,14 +76,14 @@ data Lit
     | LChar Char
     | LBool Bool
     | LUnit
-    deriving (Show)
+    deriving (Show, Data, Typeable)
 
 data Pattern
     = PCon Name [Text]
     | PLit Lit
     | PVar Text
     | PWild
-    deriving (Show)
+    deriving (Show, Data, Typeable)
 
 type UntypedProgram = Program ()
 type TypedProgram = Program Type

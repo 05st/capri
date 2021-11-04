@@ -142,6 +142,7 @@ resolveTypeAnnot = \case
     Nothing -> return Nothing
 
 fixName :: Name -> Resolve Name
-fixName name = do
+fixName (Unqualified name) = do
     mod <- ask
-    return (Qualified (mod ++ [extractName name]))
+    return (Qualified (mod ++ [name]))
+fixName qualified = return qualified
