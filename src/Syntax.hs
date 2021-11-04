@@ -24,7 +24,7 @@ type TypeAnnot = Maybe Type
 type Params = [(Text, TypeAnnot)]
 data TopLvl a
     = TLFunc a SourcePos Name Params TypeAnnot (Expr a)
-    | TLOper a SourcePos OperatorDef Name Params TypeAnnot (Expr a)
+    | TLOper a SourcePos Name Params TypeAnnot (Expr a)
     | TLExtern Text [Type] Type
     | TLType SourcePos Name [TVar] [(Name, [Type])]
     | TLStruct SourcePos Name [TVar] [(Text, Type)]

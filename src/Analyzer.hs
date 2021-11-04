@@ -1,6 +1,7 @@
 {-# Language OverloadedStrings #-}
 {-# Language LambdaCase #-}
 {-# Language TupleSections #-}
+{-# Language FlexibleContexts #-}
 
 module Analyzer (analyze) where
 
@@ -114,7 +115,7 @@ generatePubVar = \case
     TLFunc _ _ name _ _ _ -> do
         var <- fresh
         return [(name, var)]
-    TLOper _ _ _ oper _ _ _ -> do
+    TLOper _ _ oper _ _ _ -> do
         var <- fresh
         return [(oper, var)]
     TLExtern {} -> return []
@@ -146,7 +147,7 @@ insertTmpVars = \case
         state <- get
         put (state { topLvlTmps = M.insert name var (topLvlTmps state) })
 
-    TLOper _ _ _ oper _ _ _ -> do
+    TLOper _ _ oper _ _ _ -> do
         var <- fresh
         state <- get
         put (state { topLvlTmps = M.insert oper var (topLvlTmps state) })
@@ -221,12 +222,12 @@ inferTopLvl = \case
             (body', typ) <- inferFn pos name params rtann body
             return (TLFunc typ pos name params rtann body')
 
-    TLOper _ pos opdef oper params rtann body -> do
+    TLOper _ pos oper params rtann body -> do
         alreadyDefined <- exists oper
         if alreadyDefined then err pos ("Operator '" ++ show oper ++ "' already defined")
         else do
             (body', typ) <- inferFn pos oper params rtann body
-            return (TLOper typ pos opdef oper params rtann body')
+            return (TLOper typ pos oper params rtann body')
 
     TLType pos typeName typeParams cons -> return (TLType pos typeName typeParams cons)
     TLStruct pos name typeParams fields -> return (TLStruct pos name typeParams fields)
@@ -249,8 +250,7 @@ inferFn pos name params rtann body = do
     when (isJust rtann) (constrain $ CEqual pos rtype' (fromJust rtann))
     sequence_ [when (isJust pann) (constrain $ CEqual pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes' panns]
 
-    retStmtTypes <- searchReturnsExpr body'
-    traverse_ (constrain . CEqual pos rtype') retStmtTypes
+    -- traverse_ (constrain . CEqual pos rtype') (searchReturnsExpr body')
 
     state <- get
     let tmpsEnv = topLvlTmps state
@@ -432,8 +432,11 @@ inferExpr = \case
             else return (EStruct rt pos newName (zip labels exprs'), rt)
 
     EAccess _ pos expr label -> do
-        (expr', et) <- inferExpr expr
-        case et of
+        ((expr', et), consts) <- listen (inferExpr expr)
+        subst <- liftEither (runSolve consts)
+        let typ = apply subst et
+
+        case typ of
             TCon name tparams -> do
                 structMap <- gets structMap
                 let entry = M.lookup name structMap
@@ -538,14 +541,8 @@ unify _ a b | a == b = return M.empty
 unify pos (TVar v) t = bind pos v t
 unify pos t (TVar v) = bind pos v t
 unify pos a@(TCon c1 ts1) b@(TCon c2 ts2)
-    | c1 /= c2 = err' pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
+    | c1 /= c2 = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = unifyMany pos ts1 ts2
-unify pos a@(TFunc pts rt) b@(TFunc pts2 rt2)
-    | length pts /= length pts2 = err' pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
-    | otherwise = unifyMany pos (rt : pts) (rt2 : pts2)
-unify pos (TPtr t) (TPtr t2) = unify pos t t2
-unify pos a@(TArray t) b@(TArray t2) = unify pos t t2
-unify pos a b = err' pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
 unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution
 unifyMany _ [] [] = return M.empty
@@ -553,11 +550,11 @@ unifyMany pos (t1 : ts1) (t2 : ts2) =
   do su1 <- unify pos t1 t2
      su2 <- unifyMany pos (apply su1 ts1) (apply su1 ts2)
      return (su2 `compose` su1)
-unifyMany pos t1 t2 = err' pos $ "Type mismatch " ++ show (head t1) ++ " ~ " ++ show (head t2)
+unifyMany pos t1 t2 = err pos $ "Type mismatch " ++ show (head t1) ++ " ~ " ++ show (head t2)
 
 bind :: SourcePos -> TVar -> Type -> Solve Substitution
 bind pos v t
-    | v `S.member` tvs t = err' pos $ "Infinite type " ++ show v ++ " ~ " ++ show t
+    | v `S.member` tvs t = err pos $ "Infinite type " ++ show v ++ " ~ " ++ show t
     | otherwise = return $ M.singleton v t 
 
 solve :: Substitution -> [Constraint] -> Solve Substitution
@@ -573,18 +570,5 @@ runSolve :: [Constraint] -> Either AnalyzerError Substitution
 runSolve cs = runIdentity $ runExceptT $ solve M.empty cs
 
 -- Utility
-searchReturnsDecl :: TypedDecl -> Infer [Type]
-searchReturnsDecl (DStmt (SRet expr)) = return [typeOfExpr expr]
-searchReturnsDecl _ = return []
-
-searchReturnsExpr :: TypedExpr -> Infer [Type]
-searchReturnsExpr (EBlock _ _ decls _) = do
-    res <- traverse searchReturnsDecl decls
-    return (concat res)
-searchReturnsExpr _ = return []
-
-err :: SourcePos -> String -> Infer a
+err :: (MonadError AnalyzerError m) => SourcePos -> String -> m a
 err pos msg = throwError (AnalyzerError pos msg)
-
-err' :: SourcePos -> String -> Solve a
-err' pos msg = throwError (AnalyzerError pos msg)

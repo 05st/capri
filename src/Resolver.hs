@@ -28,13 +28,19 @@ resolveModule (Module pos name imports topLvls pubs) = do
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
     TLFunc t pos name params tann body -> do
+        let (pnames, ptypes) = unzip params
         name' <- fixName name
         body' <- resolveExpr body
-        return (TLFunc t pos name' params tann body')
-    TLOper t pos opdef name params tann body -> do
+        ptypes' <- traverse resolveTypeAnnot ptypes
+        tann' <- resolveTypeAnnot tann
+        return (TLFunc t pos name' (zip pnames ptypes') tann' body')
+    TLOper t pos name params tann body -> do
+        let (pnames, ptypes) = unzip params
         name' <- fixName name
         body' <- resolveExpr body
-        return (TLOper t pos opdef name' params tann body')
+        ptypes' <- traverse resolveTypeAnnot ptypes
+        tann' <- resolveTypeAnnot tann
+        return (TLOper t pos name' (zip pnames ptypes') tann' body')
     TLType pos name tvars cons -> do
         name' <- fixName name
         let (conNames, conTypes) = unzip cons
@@ -50,9 +56,7 @@ resolveDecl :: UntypedDecl -> Resolve UntypedDecl
 resolveDecl = \case
     DVar t pos mut name tann expr -> do
         expr' <- resolveExpr expr
-        tann' <- case tann of
-            Just t -> Just <$> resolveType t
-            Nothing -> return Nothing
+        tann' <- resolveTypeAnnot tann
         return (DVar t pos mut name tann' expr')
     DStmt s -> DStmt <$> resolveStmt s
 
@@ -131,6 +135,11 @@ resolveType = \case
         ptypes' <- traverse resolveType ptypes
         TFunc ptypes' <$> resolveType rtype
     a -> return a
+
+resolveTypeAnnot :: Maybe Type -> Resolve (Maybe Type)
+resolveTypeAnnot = \case
+    Just t -> Just <$> resolveType t
+    Nothing -> return Nothing
 
 fixName :: Name -> Resolve Name
 fixName name = do

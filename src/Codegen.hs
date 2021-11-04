@@ -213,7 +213,7 @@ genModule (Module _ name _ topLvls _) = do
 genTopLevel :: TypedTopLvl -> Gen ()
 genTopLevel = \case
     TLFunc t _ name_ params _ body -> genFunction False t name_ params body
-    TLOper t _ _ oper_ params _ body -> genFunction True t oper_ params body
+    TLOper t _ oper_ params _ body -> genFunction True t oper_ params body
 
     TLType _ typeName tparams_ valueCons -> do
         let typeName' = "_t_" <> convertName typeName

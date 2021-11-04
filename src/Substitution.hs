@@ -14,14 +14,8 @@ class Substitutable a where
 instance Substitutable Type where
     tvs (TCon _ tps) = tvs tps
     tvs (TVar tv) = Set.singleton tv
-    tvs (TFunc a b) = tvs a `Set.union` tvs b
-    tvs (TPtr t) = tvs t
-    tvs (TArray t) = tvs t
     apply s t@(TVar tv) = Map.findWithDefault t tv s
-    apply s (TFunc a b) = TFunc (apply s a) (apply s b)
     apply s (TCon c tps) = TCon c (apply s tps)
-    apply s (TPtr t) = TPtr (apply s t)
-    apply s (TArray t) = TArray (apply s t)
 
 instance Substitutable TypeScheme where
     tvs (Forall vs t) = tvs t `Set.difference` Set.fromList vs

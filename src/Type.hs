@@ -14,10 +14,7 @@ import Name
 newtype TVar = TV Text deriving (Show, Eq, Ord)
 data Type
     = TCon Name [Type]
-    | TFunc [Type] Type
     | TVar TVar
-    | TPtr Type
-    | TArray Type
     deriving (Eq, Ord)
 
 data Constraint = CEqual SourcePos Type Type deriving (Show)
@@ -41,11 +38,15 @@ pattern TChar = TCon (Unqualified "char") []
 pattern TBool = TCon (Unqualified "bool") []
 pattern TUnit = TCon (Unqualified "unit") []
 
+pattern TFunc pts rt = TCon (Unqualified "->") (rt : pts)
+pattern TPtr t = TCon (Unqualified "*") [t]
+pattern TArray t = TCon (Unqualified "[]") [t]
+
 instance Show Type where
     show = \case
-        TCon con [] -> show con
-        TCon con ts -> show con ++ "<" ++ intercalate ", " (map show ts) ++ ">"
-        TFunc pts rt -> intercalate ", " (map show pts) ++ " -> " ++ show rt
-        TVar (TV var) -> unpack var
         TPtr t -> show t ++ "*"
         TArray t -> "[]" ++ show t
+        TFunc pts rt -> intercalate ", " (map show pts) ++ " -> " ++ show rt
+        TCon con [] -> show con
+        TCon con ts -> show con ++ "<" ++ intercalate ", " (map show ts) ++ ">"
+        TVar (TV var) -> unpack var

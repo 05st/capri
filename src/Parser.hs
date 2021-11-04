@@ -22,6 +22,26 @@ import Type
 import OperatorDef
 import Name
 
+-- Parse operator defs
+parseModuleOpDefs :: Parser ()
+parseModuleOpDefs = do
+    manyTill (try parseModuleOpDef <|> (() <$ anySingle)) eof
+    return ()
+    where
+        parseModuleOpDef = do
+            reserved "op"
+            assocParsed <- opAssoc
+            precedence <- decimal
+            oper <- operator
+
+            let opdef = OperatorDef assocParsed precedence oper
+            (opdefs, pubs) <- S.get
+            S.put (opdef : opdefs, pubs)
+
+opAssoc :: Parser Assoc
+opAssoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
+    <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
+
 -- Module
 parseModule :: Parser UntypedModule
 parseModule = do
@@ -41,12 +61,15 @@ parseModule = do
 
 -- Top Level Declarations
 topLvlDecl :: Parser UntypedTopLvl
-topLvlDecl = try topLvlFuncDecl <|> try topLvlOperDecl <|> try topLvlTypeDecl <|> topLvlStructDecl <|> topLvlExternDecl
+topLvlDecl = maybePubTopLvlDecl <|> topLvlExternDecl
+    where
+        maybePubTopLvlDecl = do
+            isPub <- option False (True <$ reserved "pub")
+            choice (map ($ isPub) [topLvlFuncDecl, topLvlOperDecl, topLvlTypeDecl, topLvlStructDecl])
 
-topLvlFuncDecl :: Parser UntypedTopLvl
-topLvlFuncDecl = do
+topLvlFuncDecl :: Bool -> Parser UntypedTopLvl
+topLvlFuncDecl isPub = do
     pos <- getSourcePos
-    isPub <- option False (True <$ reserved "pub")
     reserved "fn"
     name <- identifier
     paramsParsed <- params
@@ -56,48 +79,25 @@ topLvlFuncDecl = do
     S.when isPub (addPub name)
     return $ TLFunc () pos (Unqualified name) paramsParsed retAnnot expr
 
-topLvlOperDecl :: Parser UntypedTopLvl
-topLvlOperDecl = do
+topLvlOperDecl :: Bool -> Parser UntypedTopLvl
+topLvlOperDecl isPub = do
     pos <- getSourcePos
-    isPub <- option False (True <$ reserved "pub")
     reserved "op"
-    assocParsed <- assoc
-    precedence <- decimal
+    opAssoc
+    decimal
     oper <- operator
     paramsParsed <- params
     retAnnot <- optional typeAnnot
-
-    let opdef = OperatorDef assocParsed precedence oper
-    (opdefs, pubs) <- S.get
-    S.put (opdef : opdefs, pubs)
 
     expr <- expression
     semi
 
     S.when isPub (addPub oper)
-    return $ TLOper () pos opdef (Unqualified oper) paramsParsed retAnnot expr
-    where
-        assoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
-            <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
+    return $ TLOper () pos (Unqualified oper) paramsParsed retAnnot expr
 
-addPub :: Text -> Parser ()
-addPub name = do
-    (opdefs, pubs) <- S.get
-    S.put (opdefs, name : pubs)
-
-topLvlExternDecl :: Parser UntypedTopLvl
-topLvlExternDecl = do
-    reserved "extern"
-    fn <- identifier
-    paramTypes <- parens (sepBy type' comma)
-    retType <- typeAnnot
-    semi
-    return (TLExtern fn paramTypes retType)
-
-topLvlTypeDecl :: Parser UntypedTopLvl
-topLvlTypeDecl = do
+topLvlTypeDecl :: Bool -> Parser UntypedTopLvl
+topLvlTypeDecl isPub = do
     pos <- getSourcePos
-    isPub <- option False (True <$ reserved "pub")
     reserved "type"
     typeName <- typeIdentifier
     typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
@@ -113,10 +113,9 @@ topLvlTypeDecl = do
             types <- option [] (parens (sepBy type' comma))
             return (Unqualified conName, types)
 
-topLvlStructDecl :: Parser UntypedTopLvl
-topLvlStructDecl = do
+topLvlStructDecl :: Bool -> Parser UntypedTopLvl
+topLvlStructDecl isPub = do
     pos <- getSourcePos
-    isPub <- option False (True <$ reserved "pub")
     reserved "struct"
     structName <- typeIdentifier
     typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
@@ -127,6 +126,20 @@ topLvlStructDecl = do
     return (TLStruct pos (Unqualified structName) typeParams fields)
     where
         field = (,) <$> identifier <*> typeAnnot
+
+topLvlExternDecl :: Parser UntypedTopLvl
+topLvlExternDecl = do
+    reserved "extern"
+    fn <- identifier
+    paramTypes <- parens (sepBy type' comma)
+    retType <- typeAnnot
+    semi
+    return (TLExtern fn paramTypes retType)
+
+addPub :: Text -> Parser ()
+addPub name = do
+    (opdefs, pubs) <- S.get
+    S.put (opdefs, name : pubs)
 
 -- Declarations
 declaration :: Parser UntypedDecl
@@ -373,7 +386,9 @@ parse files =
         Left err -> Left (errorBundlePretty err)
         Right prog -> Right prog
     where
-        parseProgram = traverse (uncurry (runParserT parseModule))
+        parseProgram files = do
+            mapM_ (uncurry (runParserT parseModuleOpDefs)) files
+            traverse (uncurry (runParserT parseModule)) files
 
 builtinOpers :: [OperatorDef]
 builtinOpers =
