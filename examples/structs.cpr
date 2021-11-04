@@ -2,8 +2,10 @@ module main;
 
 import io;
 
+extern printf(str, i32, i32): unit;
+
 struct Example {
-    field: str,
+    field: [2]str,
     xyz: bool
 };
 
@@ -12,19 +14,21 @@ struct Point {
     y: i32
 };
 
-fn mid(p1: Point, p2: Point): Point {
-    ret := Point {
+fn mid(p1: Point, p2: Point): Point
+    Point {
         x = (p1.x + p2.x) / 2,
         y = (p1.y + p2.y) / 2
     };
-    ret
-};
 
 fn main() {
     mut var := Example {
-        field = "test",
+        field = ["test", "ok"],
         xyz = false
     };
-    var.field = "changed";
-    println(var.field);
+    var.field = ["it", "changed"];
+    println((var.field)[1]);
+    p1 := Point { x = 3, y = 7 };
+    p2 := Point { x = 9, y = 1 };
+    p3 := mid(p1, p2);
+    printf("%d, %d\n", p3.x, p3.y);
 };

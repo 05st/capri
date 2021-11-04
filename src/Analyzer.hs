@@ -210,7 +210,7 @@ insertValueCons pos typeName typeParams ((conName, conTypes) : restCons) = do
 
 checkInfiniteType :: Name -> Type -> Bool
 checkInfiniteType typeName (TCon name _) = name == typeName
-checkInfiniteType typeName (TArray t) = checkInfiniteType typeName t
+checkInfiniteType typeName (TArray t _) = checkInfiniteType typeName t
 checkInfiniteType _ _ = False
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
@@ -417,15 +417,22 @@ inferExpr = \case
         (exprs', ets) <- unzip <$> traverse inferExpr exprs
         tv <- fresh
         sequence_ [constrain (CEqual pos tv et) | et <- ets]
-        let typ = TArray tv
+        let typ = TArray tv (length ets)
         return (EArray typ pos exprs', typ)
 
     EIndex _ pos expr idx -> do
+        when (idx < 0) (err pos "Negative index")
+
         (expr', etype) <- inferExpr expr
-        tv <- fresh
-        let typ = TArray tv
-        constrain (CEqual pos typ etype)
-        return (EIndex tv pos expr' idx, tv)
+        consts <- gets constraints
+        subst <- liftEither (runSolve consts)
+        let typ = apply subst etype
+
+        case typ of 
+            TArray t len -> do
+                when (idx >= len) (err pos $ "Array index out of bounds (idx " ++ show idx ++ ", len " ++ show len ++ ")")
+                return (EIndex t pos expr' idx, t)
+            _ -> err pos "Attempt to index non-array"
 
     EStruct _ pos structName fields -> do
         let (labels, exprs) = unzip fields
@@ -437,9 +444,8 @@ inferExpr = \case
         structMap <- gets structMap
         let (labels', _) = unzip $ fromJust (M.lookup newName structMap) -- struct labels should be defined if its type was
         
-        if labels /= labels'
-            then err pos ("Invalid/missing field names when instancing struct " ++ show structName)
-            else return (EStruct rt pos newName (zip labels exprs'), rt)
+        when (labels /= labels') (err pos $ "Invalid/missing field names when instancing struct " ++ show structName)
+        return (EStruct rt pos newName (zip labels exprs'), rt)
 
     EAccess _ pos expr label -> do
         (expr', et)  <- inferExpr expr
@@ -455,7 +461,8 @@ inferExpr = \case
                 case lookup label (fromJust entry) of
                     Just t -> return (EAccess t pos expr' label, t)
                     Nothing -> err pos ("Struct " ++ show name ++ " has no field '" ++ show label ++ "'")
-            _ -> err pos ("Unable to infer type of expression; please provide type annotations (accessing " ++ show label ++ ")")
+            TVar _ -> err pos ("Unable to infer type of expression; please provide type annotations (accessing " ++ show label ++ ")")
+            _ -> err pos ("Attempt to access non-struct (accessing " ++ show label ++ ")")
 
 inferLit :: Lit -> Type
 inferLit = \case
@@ -554,6 +561,12 @@ unify pos t (TVar v) = bind pos v t
 unify pos a@(TCon c1 ts1) b@(TCon c2 ts2)
     | c1 /= c2 = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = unifyMany pos ts1 ts2
+unify pos a@(TArray t (-1)) b@(TArray t2 l2) = unify pos t t2
+unify pos a@(TArray t l) b@(TArray t2 (-1)) = unify pos t t2
+unify pos a@(TArray t l) b@(TArray t2 l2)
+    | l /= l2 = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
+    | otherwise = unify pos t t2
+unify pos a b = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
 unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution
 unifyMany _ [] [] = return M.empty

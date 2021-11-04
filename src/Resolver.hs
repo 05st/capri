@@ -130,7 +130,7 @@ resolveType :: Type -> Resolve Type
 resolveType = \case
     TCon name types | extractName name `notElem` reservedNames -> flip TCon types <$> fixName name
     TPtr t -> TPtr <$> resolveType t
-    TArray t -> TArray <$> resolveType t
+    TArray t l -> flip TArray l <$> resolveType t
     TFunc ptypes rtype -> do
         ptypes' <- traverse resolveType ptypes
         TFunc ptypes' <$> resolveType rtype

@@ -244,7 +244,7 @@ index :: Parser UntypedExpr
 index = do
     pos <- getSourcePos
     expr <- value
-    idx <- brackets decimal
+    idx <- brackets signedInteger -- if negative, let analyzer error
     return (EIndex () pos expr (fromIntegral idx))
 
 deref :: Parser UntypedExpr
@@ -332,9 +332,9 @@ typeFunc = do
 
 typeArray :: Parser Type
 typeArray = do
-    brackets sc
+    len <- brackets decimal
     t <- try typeCon <|> typeBase
-    let typ = TArray t
+    let typ = TArray t (fromIntegral len)
     option typ (TPtr typ <$ symbol "*")
 
 typeCon :: Parser Type

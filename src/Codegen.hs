@@ -316,8 +316,8 @@ genTypeVariant typeName (conName, conTypes) = do
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
-    DVar (TArray t) _ _ name _ (EArray _ _ exprs) -> do
-        out (convertType t <> " " <> fromText name <> "[] = {")
+    DVar (TArray t len) _ _ name _ (EArray _ _ exprs) -> do
+        out (convertType t <> " " <> fromText name <> "[" <> (fromString . show $ len) <> "] = {")
         sequence_ (intersperse (out ", ") (map genExpr exprs))
         outln "};"
         flushGen
@@ -415,9 +415,11 @@ genExpr = \case
     EBinOp _ _ oper a b -> do
         if extractName oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
             then do
+                out "("
                 genExpr a
                 out (fromText $ extractName oper)
                 genExpr b
+                out ")"
             else do
                 map <- gets operMap
                 let id = (fromString . show) (fromJust $ M.lookup oper map)
@@ -454,10 +456,10 @@ genExpr = \case
                 out (convertType typ)
             Right expr -> genExpr expr
         out ")"
-    EArray (TArray t) _ exprs -> do
+    EArray (TArray t len) _ exprs -> do
         cur <- collectBuffer
         tvar <- tmpVar
-        out (convertType t <> " " <> tvar <> "[] = ") 
+        out (convertType t <> " " <> tvar <> "[" <> (fromString . show $ len) <> "] = ") 
         out "{"
         sequence_ (intersperse (out ", ") (map genExpr exprs))
         outln "};"
@@ -545,7 +547,7 @@ convertType = \case
     TBool -> "bool"
     TUnit -> "unit"
     TCon name [] -> "_t_" <> convertName name
-    a@(TArray t) -> convertType t <> singleton '*'
+    a@(TArray t _) -> convertType t <> singleton '*'
         {-
         tstr <- convertType t
         return (tstr <> "*")

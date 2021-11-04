@@ -17,6 +17,7 @@ newtype TVar = TV Text deriving (Show, Eq, Ord, Data, Typeable)
 data Type
     = TCon Name [Type]
     | TVar TVar
+    | TArray Type Int
     deriving (Eq, Ord, Data, Typeable)
 
 data Constraint = CEqual SourcePos Type Type
@@ -42,12 +43,11 @@ pattern TUnit = TCon (Unqualified "unit") []
 
 pattern TFunc pts rt = TCon (Unqualified "->") (rt : pts)
 pattern TPtr t = TCon (Unqualified "*") [t]
-pattern TArray t = TCon (Unqualified "[]") [t]
 
 instance Show Type where
     show = \case
         TPtr t -> show t ++ "*"
-        TArray t -> "[]" ++ show t
+        TArray t n -> "[" ++ show n ++ "]" ++ show t
         TFunc pts rt -> intercalate ", " (map show pts) ++ " -> " ++ show rt
         TCon con [] -> show con
         TCon con ts -> show con ++ "<" ++ intercalate ", " (map show ts) ++ ">"
