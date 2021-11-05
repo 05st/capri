@@ -197,9 +197,7 @@ insertValueCons pos typeName typeParams ((conName, conTypes) : restCons) = do
             if (varsTypeParams `S.intersection` varsCon) /= varsCon
                 then let undefineds = S.toList (varsCon `S.difference` varsTypeParams)
                      in err pos ("Undefined type variables " ++ show undefineds)
-                else let typ = case conTypes of
-                            [] -> TCon typeName typeParams' -- generalize env (TParam typeNam)
-                            _ -> TFunc conTypes (TCon typeName typeParams') -- generalize env (TFunc (TParam ttypeParams' (TCon typeName))
+                else let typ = TFunc conTypes (TCon typeName typeParams') -- generalize env (TFunc (TParam ttypeParams' (TCon typeName))
                          scheme = Forall [] typ
                      in do
                         pubsEnv <- gets pubsEnv

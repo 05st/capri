@@ -1,19 +1,19 @@
 module main;
 
-extern printf(str, bool): unit;
+import io;
 
-fn even(n)
+fn even(n: i32)
     if n == 0
         true
     else
         odd(n - 1);
 
-fn odd(n)
+fn odd(n: i32)
     if n == 0
         false
     else
         even(n - 1);
 
 fn main() {
-    printf("%d\n", even(20));
+    println(if even(20) "even" else "odd");
 };

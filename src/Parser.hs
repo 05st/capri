@@ -110,7 +110,7 @@ topLvlTypeDecl isPub = do
     where
         valueCon = do
             conName <- typeIdentifier
-            types <- option [] (parens (sepBy type' comma))
+            types <- parens (sepBy type' comma)
             return (Unqualified conName, types)
 
 topLvlStructDecl :: Bool -> Parser UntypedTopLvl

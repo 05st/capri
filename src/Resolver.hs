@@ -1,4 +1,5 @@
 {-# Language LambdaCase #-}
+{-# Language OverloadedStrings #-}
 
 module Resolver where
 
@@ -49,7 +50,9 @@ resolveTopLvl = \case
         return (TLType pos name' tvars (zip conNames' conTypes'))
     TLStruct pos name tvars fields -> do
         name' <- fixName name
-        return (TLStruct pos name' tvars fields)
+        let (labels, typs) = unzip fields
+        typs' <- traverse resolveType typs
+        return (TLStruct pos name' tvars (zip labels typs'))
     a -> return a
 
 resolveDecl :: UntypedDecl -> Resolve UntypedDecl
@@ -115,7 +118,10 @@ resolveExpr = \case
     ESizeof t p (Right expr) -> ESizeof t p . Right <$> resolveExpr expr
     EArray t p exprs -> EArray t p <$> traverse resolveExpr exprs
     EIndex t p expr idx -> flip (EIndex t p) idx <$> resolveExpr expr
-    EStruct t p structName fields -> flip (EStruct t p) fields <$> fixName structName
+    EStruct t p structName fields -> do
+        let (labels, exprs) = unzip fields
+        exprs' <- traverse resolveExpr exprs
+        flip (EStruct t p) (zip labels exprs') <$> fixName structName
     EAccess t p expr label -> flip (EAccess t p) label <$> resolveExpr expr
     a -> return a
 
@@ -128,13 +134,15 @@ resolvePattern = \case
 
 resolveType :: Type -> Resolve Type
 resolveType = \case
-    TCon name types | extractName name `notElem` reservedNames -> flip TCon types <$> fixName name
+    TCon name types | extractName name `notElem` primitiveTypes -> flip TCon types <$> fixName name
     TPtr t -> TPtr <$> resolveType t
     TArray t l -> flip TArray l <$> resolveType t
     TFunc ptypes rtype -> do
         ptypes' <- traverse resolveType ptypes
         TFunc ptypes' <$> resolveType rtype
     a -> return a
+    where
+        primitiveTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "str", "unit", "*", "->"]
 
 resolveTypeAnnot :: Maybe Type -> Resolve (Maybe Type)
 resolveTypeAnnot = \case

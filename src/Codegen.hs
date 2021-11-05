@@ -542,20 +542,12 @@ convertType = \case
     TFloat32 -> "float"
     TFloat64 -> "double"
     TPtr t -> convertType t <> singleton '*'
-    TStr -> "char*" --"string"
+    TStr -> "char*"
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"
     TCon name [] -> "_t_" <> convertName name
     a@(TArray t _) -> convertType t <> singleton '*'
-        {-
-        tstr <- convertType t
-        return (tstr <> "*")
-        addStaticArrayType a
-        tstr <- convertType t
-        return ("array_" <> tstr <> "_" <> (fromString . show $ l))
-        -}
-
     TVar (TV v) -> fromText v
     other -> error (show other)
 
