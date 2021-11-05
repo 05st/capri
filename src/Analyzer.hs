@@ -561,20 +561,17 @@ unify pos t (TVar v) = bind pos v t
 unify pos a@(TCon c1 ts1) b@(TCon c2 ts2)
     | c1 /= c2 = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = unifyMany pos ts1 ts2
-unify pos a@(TArray t (-1)) b@(TArray t2 l2) = unify pos t t2
-unify pos a@(TArray t l) b@(TArray t2 (-1)) = unify pos t t2
 unify pos a@(TArray t l) b@(TArray t2 l2)
     | l /= l2 = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
     | otherwise = unify pos t t2
 unify pos a b = err pos $ "Type mismatch " ++ show a ++ " ~ " ++ show b
 
 unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution
-unifyMany _ [] [] = return M.empty
-unifyMany pos (t1 : ts1) (t2 : ts2) =
-  do su1 <- unify pos t1 t2
-     su2 <- unifyMany pos (apply su1 ts1) (apply su1 ts2)
-     return (su2 `compose` su1)
-unifyMany pos t1 t2 = err pos $ "Type mismatch " ++ show (head t1) ++ " ~ " ++ show (head t2)
+unifyMany pos (t1 : ts1) (t2 : ts2) = do
+    su1 <- unify pos t1 t2
+    su2 <- unifyMany pos (apply su1 ts1) (apply su1 ts2)
+    return (su2 `compose` su1)
+unifyMany _ _ _ = return M.empty
 
 bind :: SourcePos -> TVar -> Type -> Solve Substitution
 bind pos v t

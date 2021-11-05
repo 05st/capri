@@ -306,9 +306,18 @@ block = braces $ do
 
 array :: Parser UntypedExpr
 array = do
-    pos <- getSourcePos
-    exprs <- brackets (sepBy expression comma)
-    return (EArray () pos exprs)
+    pos <- getSourcePos 
+    parsed <- brackets (try manyInitArray <|> regArrayLit)
+    return (parsed pos)
+    where
+        regArrayLit = do
+            exprs <- sepBy expression comma
+            return (\pos -> EArray () pos exprs)
+        manyInitArray = do
+            initExpr <- expression
+            semi
+            count <- decimal
+            return (\pos -> EArray () pos (replicate (fromIntegral count) initExpr))
 
 -- Literals
 literal :: Parser Lit

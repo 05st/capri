@@ -31,4 +31,6 @@ fn main() {
     p2 := Point { x = 9, y = 1 };
     p3 := mid(p1, p2);
     printf("%d, %d\n", p3.x, p3.y);
+    lol := ["abdefgh"; 1024];
+    println(lol[1023]);
 };
