@@ -30,6 +30,7 @@ dependencies:
 - temporary
 - process
 - uniplate
+- lens
 
 library:
   source-dirs: src

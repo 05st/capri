@@ -251,7 +251,7 @@ inferFn pos name params rtann body = do
     subst <- liftEither (runSolve consts)
     env <- gets environment
     let typ = apply subst (TFunc ptypes rtype)
-        scheme = generalize env typ
+        scheme = Forall [] typ-- generalize env typ
 
     let (TFunc ptypes' rtype') = typ
     when (isJust rtann) (constrain $ CEqual pos rtype' (fromJust rtann))

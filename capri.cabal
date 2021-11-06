@@ -42,6 +42,7 @@ library
       base >=4.7 && <5
     , containers
     , directory
+    , lens
     , megaparsec
     , mtl
     , optparse-applicative
@@ -64,6 +65,7 @@ executable capri-exe
     , capri
     , containers
     , directory
+    , lens
     , megaparsec
     , mtl
     , optparse-applicative
@@ -87,6 +89,7 @@ test-suite capri-test
     , capri
     , containers
     , directory
+    , lens
     , megaparsec
     , mtl
     , optparse-applicative

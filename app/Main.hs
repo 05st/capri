@@ -7,6 +7,8 @@ module Main where
 import Text.Printf
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy.IO as LazyT
+import Data.Text.Lazy.Builder
 import System.Environment
 import System.Directory
 import System.CPUTime
@@ -72,7 +74,8 @@ runOpts (Options dirInput cOut backend stlDir outFile inPath) = do
                 Right annotated -> do
                     putStr "Generating..."
                     start <- getCPUTime
-                    generate cOutFile annotated noStdLib
+                    let !output = generate annotated noStdLib
+                    LazyT.writeFile cOutFile (toLazyText output)
 
                     unless cOut (callProcess backend [cOutFile, "-o", outFile])
 

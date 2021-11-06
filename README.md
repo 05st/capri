@@ -17,7 +17,7 @@ Takes inspiration from languages such as Rust or Haskell.
 - Module system
 
 ## Planned
-- Parametric polymorphism (currently only functions)
+- Parametric polymorphism
 - Typeclasses
 
 ## Example
