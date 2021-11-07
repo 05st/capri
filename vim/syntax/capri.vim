@@ -11,7 +11,7 @@ endif
 syn keyword Keyword module import extern infixl infixr infix prefix postfix
 
 " Keywords
-syn keyword Keyword pub fn op type return sizeof
+syn keyword Keyword pub fn op type struct return sizeof
 syn keyword StorageClass mut
 
 " Conditionals
