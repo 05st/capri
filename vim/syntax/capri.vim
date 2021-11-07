@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language: Capri
 " Maintainer: 05st
-" Latest Revision: 31 October 2021
+" Latest Revision: 6 November 2021
 
 if exists("b:current_syntax")
     finish
@@ -21,7 +21,7 @@ syn keyword Conditional if else match
 syn keyword Conditional while for in
 
 " Built-in types
-syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str char bool unit
+syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char bool unit
 
 " Boolean values
 syn keyword Boolean true false
