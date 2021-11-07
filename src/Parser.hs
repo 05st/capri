@@ -194,7 +194,7 @@ expression = do
         postfixOp name f = Postfix (reservedOp name >> return f)
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try access <|> try index <|> try cast <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try access <|> try index <|> try cast <|> try arrowIndex <|> deref <|> ref <|> value
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -229,7 +229,7 @@ closure = do
 assign :: Parser UntypedExpr
 assign = do
     pos <- getSourcePos
-    var <- deref <|> try index <|> try access <|> value 
+    var <- deref <|> try arrowIndex <|> try index <|> try access <|> value 
     reservedOp "="
     EAssign () pos var <$> expression
 
@@ -246,6 +246,13 @@ index = do
     expr <- value
     idx <- brackets signedInteger -- if negative, let analyzer error
     return (EIndex () pos expr (fromIntegral idx))
+
+arrowIndex :: Parser UntypedExpr
+arrowIndex = do
+    pos <- getSourcePos
+    expr <- value
+    reservedOp "->"
+    EArrow () pos expr <$> identifier
 
 deref :: Parser UntypedExpr
 deref = do
@@ -401,8 +408,8 @@ parse files =
 
 builtinOpers :: [OperatorDef]
 builtinOpers =
-    [OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
-     OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/", OperatorDef ALeft 10 "%",
+    [OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/", OperatorDef ALeft 10 "%",
+     OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
      OperatorDef ALeft 3 "==", OperatorDef ALeft 3 "!=",
      OperatorDef ALeft 4 ">", OperatorDef ALeft 4 "<",
      OperatorDef ALeft 4 ">=", OperatorDef ALeft 4 "<=",

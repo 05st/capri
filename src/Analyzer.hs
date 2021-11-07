@@ -330,6 +330,7 @@ inferExpr = \case
                 unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
             EAccess _ _ EDeref {} _ -> return (expr', ltype)
+            EArrow _ _ EVar {} _ -> return (expr', ltype)
             EDeref {} -> return (expr', ltype)
             _ -> err pos $ "Cannot assign to non-lvalue" ++ show l
 
@@ -462,6 +463,23 @@ inferExpr = \case
                     Nothing -> err pos ("Struct " ++ show name ++ " has no field '" ++ show label ++ "'")
             TVar _ -> err pos ("Unable to infer type of expression; please provide type annotations (accessing " ++ show label ++ ")")
             _ -> err pos ("Attempt to access non-struct (accessing " ++ show label ++ ")")
+
+    EArrow _ pos expr label -> do
+        (expr', et) <- inferExpr expr
+        consts <- gets constraints
+        subst <- liftEither (runSolve consts)
+        let typ = apply subst et
+
+        case typ of
+            TPtr (TCon name tparams) -> do 
+                structMap <- gets structMap
+                let entry = M.lookup name structMap
+                unless (isJust entry) (err pos (show name ++ " is not a struct"))
+                case lookup label (fromJust entry) of
+                    Just t -> return (EArrow t pos expr' label, t)
+                    Nothing -> err pos ("Struct " ++ show name ++ " has no field '" ++ show label ++ "'")
+            TVar _ -> err pos ("Unable to infer type of expression; please provide type annotations (arrow-accessing " ++ show label ++ ")")
+            _ -> err pos ("Attempt to arrow-access expression which isnt a pointer to a struct (arrow-accessing " ++ show label ++ ")")
 
 inferLit :: Lit -> Type
 inferLit = \case

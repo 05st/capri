@@ -381,9 +381,13 @@ genExpr = \case
         sequence_ (intersperse (out ", ") [out ("." <> fromText label <> " = ") *> genExpr expr | (label, expr) <- fields])
         out "}"
 
-    EAccess t _ expr label -> do
+    EAccess _ _ expr label -> do
         genExpr expr
         out ("." <> fromText label)
+
+    EArrow _ _ expr label -> do
+        genExpr expr
+        out ("->" <> fromText label)
 
 genLit :: Lit -> Builder
 genLit = \case

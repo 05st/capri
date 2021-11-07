@@ -62,6 +62,7 @@ data Expr a
     | ECast a SourcePos Type (Expr a)
     | EDeref a SourcePos (Expr a)
     | ERef a SourcePos (Expr a)
+    | EArrow a SourcePos (Expr a) Text
     | ESizeof a SourcePos (Either Type (Expr a))
     | EArray a SourcePos [Expr a]
     | EIndex a SourcePos (Expr a) Int
@@ -118,3 +119,4 @@ typeOfExpr = \case
     EIndex t _ _ _ -> t
     EStruct t _ _ _ -> t
     EAccess t _ _ _ -> t
+    EArrow t _ _ _ -> t

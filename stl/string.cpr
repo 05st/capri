@@ -18,12 +18,12 @@ pub fn emptystring(): String
     };
 
 pub fn appendchar(a: String*, c: char): unit {
-    if (*a).used == (*a).size {
-        (*a).size = (*a).size * 2;
-        (*a).data = (char*)realloc((*a).data, (*a).size * sizeof(char));
+    if a->used == a->size {
+        a->size = a->size * 2;
+        a->data = (char*)realloc(a->data, a->size * sizeof(char));
     };
-    *((*a).data + ((*a).used)) = c;
-    (*a).used = (*a).used + 1;
+    *(a->data + a->used) = c;
+    a->used = a->used + 1;
 };
 
 pub fn fromcstr(a: char*): String {
