@@ -1,0 +1,94 @@
+module string;
+
+extern malloc(i32): i32;
+extern realloc(char*, i32): i32;
+extern strlen(char*): i32;
+
+pub struct String {
+    data: char*,
+    used: i32,
+    size: i32
+};
+
+pub fn emptystring(): String
+    String {
+        data = (char*)malloc(4 * sizeof(char)),
+        used = 0,
+        size = 4
+    };
+
+pub fn appendchar(a: String*, c: char): unit {
+    if (*a).used == (*a).size {
+        (*a).size = (*a).size * 2;
+        (*a).data = (char*)realloc((*a).data, (*a).size * sizeof(char));
+    };
+    *((*a).data + ((*a).used)) = c;
+    (*a).used = (*a).used + 1;
+};
+
+pub fn fromcstr(a: char*): String {
+    res := emptystring();
+    s := (char*)a;
+    mut i := 0;
+    while (*(s + i) != (char)0) {
+        appendchar(&res, *(s + i));
+        i = i + 1;
+    };
+    res
+};
+
+pub fn cstr(a: String): char*
+    a.data;
+
+pub fn tostringi32(a: i32): String {
+    res := emptystring();
+    mut num := a;
+
+    if num == 0 {
+        return fromcstr("0");
+    };
+
+    neg := num < 0;
+    if neg {
+        num = 0 - num;
+    };
+
+    while (num != 0) {
+        rem := num % 10;
+        appendchar(&res, (char)(rem + '0'));
+        num = num / 10;
+    };
+
+    if neg {
+        appendchar(&res, '-');
+    };
+
+    cstrrev(res.data);
+
+    res
+};
+
+pub fn cstrrev(a: char*): unit {
+    mut i := strlen(a) - 1;
+    mut j := 0;
+
+    mut buf := ' ';
+    while i > j {
+        buf = *(a + i);
+        *(a + i) = *(a + j);
+        *(a + j) = buf;
+        i = i - 1;
+        j = j + 1;
+    };
+};
+
+pub op infixl 5 ++ (a: String, b: String): String {
+    mut res := a;
+    s := b.data;
+    mut i := 0;
+    while (*(s + i) != (char)0) {
+        appendchar(&res, *(s + i));
+        i = i + 1;
+    };
+    res
+};

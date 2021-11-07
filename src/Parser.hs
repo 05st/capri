@@ -194,7 +194,7 @@ expression = do
         postfixOp name f = Postfix (reservedOp name >> return f)
 
 term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try access <|> try index <|> (deref <|> ref <|> value)
+term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try access <|> try index <|> try cast <|> (deref <|> ref <|> value)
 
 ifExpr :: Parser UntypedExpr
 ifExpr = do
@@ -262,7 +262,7 @@ ref = do
 value :: Parser UntypedExpr
 value = do
     pos <- getSourcePos 
-    array <|> (try sizeof <|> try cast <|> try call <|> try structCreate) <|> (ELit () pos <$> literal) <|> try variable <|> try block <|> parens expression
+    array <|> (try sizeof <|> try call <|> try structCreate) <|> (ELit () pos <$> literal) <|> try variable <|> try block <|> parens expression
 
 sizeof :: Parser UntypedExpr 
 sizeof = do
@@ -275,7 +275,7 @@ cast :: Parser UntypedExpr
 cast = do
     pos <- getSourcePos 
     typ <- parens type'
-    ECast () pos typ <$> expression
+    ECast () pos typ <$> value
 
 call :: Parser UntypedExpr
 call = do
@@ -360,7 +360,7 @@ typeBase = do
 
 typePrim :: Parser Type
 typePrim = choice $ map (\s -> TCon (Unqualified s) [] <$ reserved s)
-    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "str", "char", "bool", "unit"]
+    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "bool", "unit"]
 
 -- Parse patterns
 pattern :: Parser Pattern
@@ -402,7 +402,7 @@ parse files =
 builtinOpers :: [OperatorDef]
 builtinOpers =
     [OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
-     OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/",
+     OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/", OperatorDef ALeft 10 "%",
      OperatorDef ALeft 3 "==", OperatorDef ALeft 3 "!=",
      OperatorDef ALeft 4 ">", OperatorDef ALeft 4 "<",
      OperatorDef ALeft 4 ">=", OperatorDef ALeft 4 "<=",

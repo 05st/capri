@@ -1,7 +1,7 @@
 module main;
 
 extern putchar(i32): unit;
-extern printf(str, i32): unit;
+extern printf(char*, i32): unit;
 extern clock(): i32;
 
 fn pdensity(d: i32)

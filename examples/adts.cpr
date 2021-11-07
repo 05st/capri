@@ -1,6 +1,6 @@
 module main;
 
-extern printf(str, i32): unit;
+extern printf(char*, i32): unit;
 
 type IntOrBool = Int(i32) | Bool(bool);
 

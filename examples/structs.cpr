@@ -2,10 +2,10 @@ module main;
 
 import io;
 
-extern printf(str, i32, i32): unit;
+extern printf(char*, i32, i32): unit;
 
 struct Example {
-    field: [2]str,
+    field: [2](char*),
     xyz: bool
 };
 

@@ -329,8 +329,9 @@ inferExpr = \case
                 isMut <- lookupMut vpos name
                 unless isMut (err pos $ "Cannot assign to immutable variable " ++ show name)
                 return (expr', ltype)
+            EAccess _ _ EDeref {} _ -> return (expr', ltype)
             EDeref {} -> return (expr', ltype)
-            _ -> err pos "Cannot assign to non-lvalue"
+            _ -> err pos $ "Cannot assign to non-lvalue" ++ show l
 
     EBlock _ pos origDecls expr -> do
         (decls', expr', etype) <- scoped id (do
@@ -358,7 +359,7 @@ inferExpr = \case
         (a', at) <- inferExpr a
         (b', bt) <- inferExpr b
         case oper of
-            _ | extractName oper `elem` ["+", "-", "*", "/"] -> do -- TODO
+            _ | extractName oper `elem` ["+", "-", "*", "/", "%"] -> do -- TODO
                 return (EBinOp at pos oper a' b', at)
             _ | extractName oper `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
                 return (EBinOp TBool pos oper a' b', TBool)
@@ -466,7 +467,7 @@ inferLit :: Lit -> Type
 inferLit = \case
     LInt _ -> TInt32
     LFloat _ -> TFloat64
-    LString _ -> TStr
+    LString _ -> TPtr TChar
     LChar _ -> TChar
     LBool _ -> TBool
     LUnit -> TUnit

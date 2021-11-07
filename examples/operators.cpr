@@ -1,6 +1,6 @@
 module main;
 
-extern printf(str, i32): unit;
+extern printf(char*, i32): unit;
 
 op infixr 10 ** (base: i32, exp: i32) {
     mut res := 1;

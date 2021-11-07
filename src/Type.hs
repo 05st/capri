@@ -36,7 +36,6 @@ pattern TUInt64 = TCon (Unqualified "u64") []
 pattern TFloat32 = TCon (Unqualified "f32") []
 pattern TFloat64 = TCon (Unqualified "f64") []
 
-pattern TStr = TCon (Unqualified "str") []
 pattern TChar = TCon (Unqualified "char") []
 pattern TBool = TCon (Unqualified "bool") []
 pattern TUnit = TCon (Unqualified "unit") []

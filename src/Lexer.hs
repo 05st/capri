@@ -23,12 +23,12 @@ reservedNames =
      "i8", "i16", "i32", "i64",
      "u8", "u16", "u32", "u64",
      "f32", "f64",
-     "str", "char", "bool", "unit",
+     "char", "bool", "unit",
      "true", "false", "()",
      "_"]
 
 reservedOpNames :: [Text]
-reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "==", "!=", ">", "<", ">=", "<=", "::"]
+reservedOpNames = ["=", ":=", "=>", "->", ":", "@", "+", "-", "*", "/", "%", "==", "!=", ">", "<", ">=", "<=", "::"]
 
 sc :: Parser ()
 sc = L.space space1 (L.skipLineComment "//") (L.skipBlockComment "/*" "*/")

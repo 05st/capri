@@ -142,7 +142,7 @@ resolveType = \case
         TFunc ptypes' <$> resolveType rtype
     a -> return a
     where
-        primitiveTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "str", "unit", "*", "->"]
+        primitiveTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "unit", "*", "->"]
 
 resolveTypeAnnot :: Maybe Type -> Resolve (Maybe Type)
 resolveTypeAnnot = \case

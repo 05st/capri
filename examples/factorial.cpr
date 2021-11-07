@@ -1,7 +1,7 @@
 module main;
 
-extern printf(str, i32): unit;
-extern scanf(str, i32*): unit;
+extern printf(char*, i32): unit;
+extern scanf(char*, i32*): unit;
 
 // Factorial
 op postfix 10 ! (n)

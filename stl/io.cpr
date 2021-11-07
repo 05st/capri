@@ -1,18 +1,18 @@
 module io;
 
-extern printf(str, str): unit;
-extern scanf(str, char*): unit;
+extern printf(char*, char*): unit;
+extern scanf(char*, char*): unit;
 extern malloc(i32): i32;
 
-pub fn print(string: str): unit
+pub fn print(string: char*): unit
     printf("%s", string);
 
-pub fn println(string: str): unit {
+pub fn println(string: char*): unit {
     printf("%s\n", string);
 };
 
-pub fn input(): str {
+pub fn input(): char* {
     buffer := (char*)malloc(256);
     scanf("%s", buffer);
-    (str)buffer
+    buffer
 };

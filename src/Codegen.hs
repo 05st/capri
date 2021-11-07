@@ -73,6 +73,7 @@ addIncludes = do
     tell "#include <stdio.h>\n"
     tell "#include <stdint.h>\n"
     tell "#include <stdbool.h>\n"
+    tell "#include <string.h>\n"
     tell "#include <math.h>\n"
     tell "#include <time.h>\n"
     tell "\n"
@@ -255,14 +256,24 @@ genExpr = \case
         out curr
         genExpr res
 
-    EIf _ _ cond a b -> do
-        out "("
+    EIf t _ cond a b -> do
+        curr <- collectBuffer
+        var <- tmpVar
+        outln (convertType t <> " " <> var <> ";")
+        out "if ("
         genExpr cond
-        out ") ? ("
+        outln ") {"
+        flushTo program
+        out (var <> " = ")
         genExpr a
-        out ") : ("
+        outln ";"
+        outln "} else {"
+        flushTo program
+        out (var <> " = ")
         genExpr b
-        out ")"
+        outln ";"
+        outln "}"
+        out (curr <> var)
 
     EMatch t _ mexpr branches -> do
         cur <- collectBuffer
@@ -298,7 +309,7 @@ genExpr = \case
         out (cur <> rvar)
 
     EBinOp _ _ oper a b -> do
-        if extractName oper `elem` ["+", "-", "*", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
+        if extractName oper `elem` ["+", "-", "*", "%", "/", ">", ">=", "<", "<=", "==", "!=", "||", "&&"]
             then do
                 out "("
                 genExpr a
@@ -334,8 +345,9 @@ genExpr = \case
         genExpr expr
 
     EDeref _ _ expr -> do
-        out "*"
+        out "(*"
         genExpr expr
+        out ")"
 
     ERef _ _ expr -> do
         out "&"
@@ -378,7 +390,7 @@ genLit = \case
     LInt n -> (fromString . show) n
     LFloat n -> (fromString . show) n
     LString s -> (fromString . show . unpack) s
-    LChar c -> "'" <> singleton c <> "'"
+    LChar c -> (fromString . show) c
     LBool True -> "true"
     LBool False -> "false"
     LUnit -> "0"
@@ -442,7 +454,6 @@ convertType = \case
     TFloat32 -> "float"
     TFloat64 -> "double"
     TPtr t -> convertType t <> singleton '*'
-    TStr -> "char*"
     TChar -> "char"
     TBool -> "bool"
     TUnit -> "unit"

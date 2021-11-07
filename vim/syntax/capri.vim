@@ -30,7 +30,7 @@ syn keyword Boolean true false
 syn match Ignore "[a-zA-Z][a-zA-Z0-9_']*"
 
 " Operators
-syn match Keyword "[!#$^&*\-+=<>./?\\|~]\+"
+syn match Keyword "[!#$%^&*\-+=<>./?\\|~]\+"
 syn match Keyword ":="
 
 " Integers
