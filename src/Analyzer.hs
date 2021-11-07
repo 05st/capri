@@ -251,7 +251,7 @@ inferFn pos name params rtann body = do
     subst <- liftEither (runSolve consts)
     env <- gets environment
     let typ = apply subst (TFunc ptypes rtype)
-        scheme = Forall [] typ-- generalize env typ
+        scheme = Forall [] typ -- generalize env typ
 
     let (TFunc ptypes' rtype') = typ
     when (isJust rtann) (constrain $ CEqual pos rtype' (fromJust rtann))
@@ -376,11 +376,15 @@ inferExpr = \case
                 return (EBinOp rt pos newName a' b', rt)
 
     EUnaOp _ pos oper expr -> do
-        (opt, newName) <- lookupType pos oper
         (a', at) <- inferExpr expr
-        rt <- fresh
-        constrain (CEqual pos opt (TFunc [at] rt))
-        return (EUnaOp rt pos oper a', rt)
+        case oper of
+            _ | extractName oper == "-" -> do
+                return (EUnaOp at pos oper a', at)
+            _ -> do
+                (opt, newName) <- lookupType pos oper
+                rt <- fresh
+                constrain (CEqual pos opt (TFunc [at] rt))
+                return (EUnaOp rt pos oper a', rt)
 
     EClosure _ pos closedVars params rtann body -> err pos "Closures not implemented yet"
 

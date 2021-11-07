@@ -25,6 +25,7 @@ import Codegen
 data Options = Options
     { dirInput :: Bool
     , cOut :: Bool
+    , runOnly :: Bool
     , clang :: String
     , stlDir :: FilePath
     , outFile :: FilePath
@@ -35,6 +36,7 @@ options :: Parser Options
 options = Options
     <$> switch (long "dir" <> short 'd' <> help "Input path is to directory")
     <*> switch (long "c" <> short 'c' <> help "Output C")
+    <*> switch (long "run" <> short 'r' <> help "Runs Capri program")
     <*> strOption (long "backend" <> short 'b' <> value "gcc" <> help "Use specified backend (default gcc)")
     <*> strOption (long "stl" <> short 's' <> value "" <> metavar "DIR" <> help "Standard library path (blank for no stl)")
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
@@ -53,33 +55,32 @@ readDir path = do
     return (zip files inputs)
 
 runOpts :: Options -> IO ()
-runOpts (Options dirInput cOut backend stlDir outFile inPath) = do
+runOpts (Options dirInput cOut runOnly backend stlDir outFile inPath) = do
     files <- if dirInput then readDir inPath else T.readFile inPath >>= \input -> return [(inPath, input)]
     (stlFiles, noStdLib) <- if null stlDir then return ([], True) else (, False) <$> readDir stlDir
-    cOutFile <- if cOut then return outFile else emptySystemTempFile "outcapri.c"
+    cOutFile <- if cOut && not runOnly then return outFile else emptySystemTempFile "outcapri.c"
 
-    putStr "Parsing..."
-    start <- getCPUTime
-    let !parseRes = parse (stlFiles ++ files)
-    end <- getCPUTime
-    printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
-    case parseRes of
+    output <- compile (stlFiles ++ files) noStdLib
+    case output of
+        Left err -> putStrLn err
+        Right code | runOnly -> do
+            binOutFile <- emptySystemTempFile ("outcapri-bin" ++ exeExtension)
+            LazyT.writeFile cOutFile (toLazyText code)
+            unless cOut (callProcess backend [cOutFile, "-o", binOutFile])
+            callProcess binOutFile []
+        Right code -> do
+            LazyT.writeFile cOutFile (toLazyText code)
+            unless cOut (callProcess backend [cOutFile, "-o", outFile])
+    
+compile :: [(String, T.Text)] -> Bool -> IO (Either String Builder)
+compile files noStdLib = do
+    putStrLn "Parsing..."
+    case parse files of
         Right prog -> do
-            putStr "Analyzing..."
-            start <- getCPUTime
-            let !analyzeRes = analyze prog
-            end <- getCPUTime
-            printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
+            putStrLn "Analyzing..."
             case analyze prog of
                 Right annotated -> do
-                    putStr "Generating..."
-                    start <- getCPUTime
-                    let !output = generate annotated noStdLib
-                    LazyT.writeFile cOutFile (toLazyText output)
-
-                    unless cOut (callProcess backend [cOutFile, "-o", outFile])
-
-                    end <- getCPUTime
-                    printf " (%0.9f sec)\n" (fromIntegral (end - start) / (10^12) :: Double)
-                Left err -> putStrLn ("ERROR (ANALYZER): " ++ err)
-        Left err -> putStrLn ("ERROR (PARSER): " ++ err)   
+                    putStrLn "Generating..."
+                    return $ Right (generate annotated noStdLib)
+                Left err -> return $ Left ("ERROR (ANALYZER): " ++ err)
+        Left err -> return $ Left ("ERROR (PARSER): " ++ err)   

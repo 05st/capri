@@ -58,7 +58,8 @@ runGen prog nostl = do
     genProgram prog
 
     tell "// Juno Compiler Output\n\n"
-    addIncludes
+    unless nostl addIncludes
+    when nostl addBackupTypedefs
     addCompilerTypedefs
     addSection _forwardDecls "Forward Declarations"
     addSection _typedefs "Typedefs"
@@ -76,6 +77,19 @@ addIncludes = do
     tell "#include <string.h>\n"
     tell "#include <math.h>\n"
     tell "#include <time.h>\n"
+    tell "\n"
+
+addBackupTypedefs :: Gen ()
+addBackupTypedefs = do
+    tell "// Backup Typedefs (no stl)\n"
+    tell "typedef signed char int8_t;\n"
+    tell "typedef unsigned char uint8_t;\n"
+    tell "typedef signed short int16_t;\n"
+    tell "typedef unsigned short uint16_t;\n"
+    tell "typedef signed long int32_t;\n"
+    tell "typedef unsigned long uint32_t;\n"
+    tell "typedef signed long long int64_t;\n"
+    tell "typedef unsigned long long uint64_t;\n"
     tell "\n"
 
 addCompilerTypedefs :: Gen ()
@@ -199,7 +213,7 @@ genTopLvl = \case
             outln "}"
             flushTo program
 
-            forwardDecls <>= fnDecl <> ";\n"
+            forwardDecls <>= fnDecl <> ";" <> (if isOper then " // " <> name' <> "\n" else "\n")
         genFunction _ _ _ _ _ = throwError "genFunction failed"
 
 genDecl :: TypedDecl -> Gen ()
@@ -326,11 +340,18 @@ genExpr = \case
                 out ")"
 
     EUnaOp _ _ oper expr -> do
-        opMap <- gets _operMap
-        let id = (fromString . show) (fromJust $ M.lookup oper opMap)
-        out ("_op_" <> id <> "(")
-        genExpr expr
-        out ")"
+        if extractName oper == "-"
+            then do
+                out "("
+                out (fromText $ extractName oper)
+                genExpr expr
+                out ")"
+            else do
+                opMap <- gets _operMap
+                let id = (fromString . show) (fromJust $ M.lookup oper opMap)
+                out ("_op_" <> id <> "(")
+                genExpr expr
+                out ")"
 
     EClosure {} -> throwError "no closures yet"
 

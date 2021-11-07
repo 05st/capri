@@ -4,7 +4,7 @@
 
 module Parser (Parser.parse) where
 
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, singleton)
 import Data.Void
 import Data.List
 import Data.Function
@@ -229,9 +229,19 @@ closure = do
 assign :: Parser UntypedExpr
 assign = do
     pos <- getSourcePos
-    var <- deref <|> try arrowIndex <|> try index <|> try access <|> value 
-    reservedOp "="
-    EAssign () pos var <$> expression
+    val <- deref <|> try arrowIndex <|> try index <|> try access <|> value 
+    try (regularAssign pos val) <|> operatorAssign pos val
+    where
+        regularAssign pos val = do
+            reservedOp "="
+            EAssign () pos val <$> expression
+        operatorAssign pos val = do -- TODO possibly make these their own AST nodes
+            pos <- getSourcePos
+            sc
+            op <- choice (map char ['+', '-', '*', '/', '%'])
+            char '='
+            sc
+            EAssign () pos val . EBinOp () pos (Unqualified $ singleton op) val <$> expression
 
 access :: Parser UntypedExpr
 access = do
@@ -408,7 +418,8 @@ parse files =
 
 builtinOpers :: [OperatorDef]
 builtinOpers =
-    [OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/", OperatorDef ALeft 10 "%",
+    [OperatorDef APrefix 10 "-",
+     OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/", OperatorDef ALeft 10 "%",
      OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
      OperatorDef ALeft 3 "==", OperatorDef ALeft 3 "!=",
      OperatorDef ALeft 4 ">", OperatorDef ALeft 4 "<",
