@@ -24,16 +24,9 @@ source-repository head
 
 library
   exposed-modules:
-      Analyzer
-      Codegen
       Lexer
-      Name
       OperatorDef
       Parser
-      Resolver
-      Substitution
-      Syntax
-      Type
   other-modules:
       Paths_capri
   hs-source-dirs:
