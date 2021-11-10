@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language: Capri
 " Maintainer: 05st
-" Latest Revision: 6 November 2021
+" Latest Revision: 9 November 2021
 
 if exists("b:current_syntax")
     finish
@@ -11,7 +11,7 @@ endif
 syn keyword Keyword module import extern infixl infixr infix prefix postfix
 
 " Keywords
-syn keyword Keyword pub fn op type struct return sizeof
+syn keyword Keyword pub fn op type let where
 syn keyword StorageClass mut
 
 " Conditionals
@@ -19,9 +19,6 @@ syn keyword Conditional if else match
 
 " Loops
 syn keyword Conditional while for in
-
-" Built-in types
-syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char bool unit
 
 " Boolean values
 syn keyword Boolean true false
@@ -31,7 +28,6 @@ syn match Ignore "[a-zA-Z][a-zA-Z0-9_']*"
 
 " Operators
 syn match Keyword "[!#$%^&*\-+=<>./?\\|~]\+"
-syn match Keyword ":="
 
 " Integers
 syn match Number "\<[0-9][0-9]*"
@@ -63,5 +59,9 @@ syn region Comment start="/\*" end="\*/" contains=Todo
 " Function Calls
 syn match Function "\w\(\w\)*("he=e-1,me=e-1
 
-" Parameterized Types
-syn match Function "\w\(\w\)*<"he=e-1,me=e-1
+" Built-in types
+syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char bool unit
+
+" Other
+syn match Ignore "<{"
+syn match Ignore "}>"
