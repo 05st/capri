@@ -1,4 +1,5 @@
 {-# Language OverloadedStrings #-}
+{-# Language TupleSections #-}
 
 module Parser where
 
@@ -9,6 +10,7 @@ import Data.List
 import Text.Megaparsec
 import Text.Megaparsec.Char
 
+import Control.Arrow
 import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
 
@@ -19,23 +21,25 @@ import Name
 import OperatorDef
 import SyntaxInfo
 
+-- Module
+pModule :: Parser UntypedModule
+pModule = do
+    opdefs <- pOperatorDefs
+    symbol "module"
+    name <- identifier
+    semi
+    Module name <$> local (const opdefs) (manyTill pTopLvlDecl eof)
+
 -- Operator Pre-defs (at top)
 pOperatorDefs :: Parser [OperatorDef]
-pOperatorDefs = manyTill pOperatorDef (symbol "module")
+pOperatorDefs = many pOperatorDef
     where
         pOperatorDef = do
             assoc <- pAssoc
             prec <- decimal
             OperatorDef assoc prec <$> (operator <* semi)
         pAssoc = (ALeft <$ symbol "infixl") <|> (ARight <$ symbol "infixr") <|> (ANone <$ symbol "infix")
-            <|> (APrefix <$ symbol "prefix") <|> (APostfix <$ symbol "synInfotfix")
-
--- Module
-pModule :: Parser UntypedModule
-pModule = do
-    symbol "module"
-    identifier
-    Module <$> manyTill pTopLvlDecl eof
+            <|> (APrefix <$ symbol "prefix") <|> (APostfix <$ symbol "postfix")
 
 -- Top Level Declarations
 pTopLvlDecl :: Parser UntypedTopLvl
@@ -53,6 +57,36 @@ pFuncOperDecl = do
     semi
 
     pure (TLFunc synInfo isOper (Unqualified name) params retAnnot body)
+
+-- Declarations
+pDecl :: Parser UntypedDecl
+pDecl = pVarDecl <|> (DStmt <$> pStmt)
+
+pVarDecl :: Parser UntypedDecl
+pVarDecl = do
+    synInfo <- pSyntaxInfo
+    symbol "let"
+    isMut <- option False (True <$ symbol "mut")
+    name <- identifier
+    annot <- optional pTypeAnnot
+    symbol "="
+    DVar synInfo isMut name annot <$> (pExpression <* semi)
+
+-- Statements
+pStmt :: Parser UntypedStmt
+pStmt = pRetStmt <|> pWhileStmt <|> (SExpr <$> (pExpression <* semi))
+
+pRetStmt :: Parser UntypedStmt
+pRetStmt = do
+    symbol "return"
+    SRet <$> (pExpression <* semi)
+
+pWhileStmt :: Parser UntypedStmt
+pWhileStmt = do
+    synInfo <- pSyntaxInfo
+    symbol "while"
+    cond <- pExpression
+    SWhile synInfo cond <$> (pExpression <* semi)
 
 -- Expressions
 pExpression :: Parser UntypedExpr
@@ -77,7 +111,7 @@ pExpression = do
         postfixOp name f = Postfix (f <$ symbol name)
 
 pTerm :: Parser UntypedExpr
-pTerm = pIfExpr
+pTerm = pIfExpr <|> pMatchExpr <|> try pCast <|> pAssign
 
 pIfExpr :: Parser UntypedExpr
 pIfExpr = do
@@ -88,13 +122,68 @@ pIfExpr = do
     onFalse <- option (ELit synInfo () LUnit) (symbol "else" *> pExpression)
     pure (EIf synInfo () cond onTrue onFalse)
 
+pMatchExpr :: Parser UntypedExpr
+pMatchExpr = do
+    synInfo <- pSyntaxInfo
+    symbol "match"
+    mexpr <- pExpression
+    EMatch synInfo () mexpr <$> braces (sepBy1 pMatchBranch comma)
+    where
+        pMatchBranch = do
+            pat <- pPattern
+            symbol "=>"
+            (pat,) <$> pExpression
+
+pCast :: Parser UntypedExpr
+pCast = do
+    synInfo <- pSyntaxInfo
+    target <- parens pType
+    ECast synInfo target <$> pCall
+
+pAssign :: Parser UntypedExpr
+pAssign = do
+    synInfo <- pSyntaxInfo
+    lhs <- pCall
+    option lhs (do
+        symbol "="
+        EAssign synInfo () lhs <$> pExpression)
+
+pCall :: Parser UntypedExpr
+pCall = do
+    synInfo <- pSyntaxInfo
+    expr <- pValue
+    option expr (do
+        args <- parens (sepBy pExpression comma)
+        pure (ECall synInfo () expr args))
+
 pValue :: Parser UntypedExpr
-pValue = pLiteralExpr
+pValue = pClosure <|> pLiteralExpr <|> try pVariable <|> parens pExpression
+
+pClosure :: Parser UntypedExpr
+pClosure = do
+    synInfo <- pSyntaxInfo
+    closedVars <- brackets (sepBy identifier comma)
+    paramsParsed <- pParams
+    retAnnot <- optional pTypeAnnot
+    EClosure synInfo () closedVars paramsParsed retAnnot <$> pExpression
 
 pLiteralExpr :: Parser UntypedExpr
 pLiteralExpr = do
     synInfo <- pSyntaxInfo
     ELit synInfo () <$> pLiteral
+
+pVariable :: Parser UntypedExpr
+pVariable = do
+    synInfo <- pSyntaxInfo
+    EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
+
+pBlock :: Parser UntypedExpr
+pBlock = do
+    synInfo <- pSyntaxInfo
+    decls <- many (try pDecl)
+    synInfo' <- pSyntaxInfo
+    result <- option (ELit synInfo' () LUnit) pExpression
+    pure (EBlock synInfo () decls result)
 
 -- Literals
 pLiteral :: Parser Lit
@@ -102,7 +191,45 @@ pLiteral = LInt <$> decimal
 
 -- Types
 pType :: Parser Type
-pType = undefined
+pType = pArrowType <|> pBaseType
+
+pArrowType :: Parser Type
+pArrowType = do
+    paramTypes <- sepBy pBaseType comma
+    symbol "->"
+    TArrow paramTypes <$> pType
+
+pTypeApp :: Parser Type
+pTypeApp = do
+    typ <- pBaseType
+    args <- angles (sepBy1 pType comma)
+    pure (TApp typ args)
+
+pBaseType :: Parser Type
+pBaseType = pConstType <|> parens pType
+
+pConstType :: Parser Type
+pConstType = TConst <$> (userDefined <|> primitive)
+    where
+        userDefined = Unqualified <$> typeIdentifier
+        primitive = choice $ map (\s -> Unqualified s <$ symbol s)
+            ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "bool", "unit"]
+
+-- Patterns
+pPattern :: Parser Pattern
+pPattern = parens pPattern <|> pVariantPattern <|> pWildPattern <|> pVarPattern <|> pLitPattern
+
+pVariantPattern :: Parser Pattern
+pVariantPattern = PVariant <$> identifier <*> pPattern
+
+pWildPattern :: Parser Pattern
+pWildPattern = PWild <$ symbol "_"
+
+pVarPattern :: Parser Pattern
+pVarPattern = PVar <$> identifier
+
+pLitPattern :: Parser Pattern
+pLitPattern = PLit <$> pLiteral
 
 -- Utility
 pSyntaxInfo :: Parser SyntaxInfo
@@ -113,3 +240,7 @@ pParams = parens (sepBy ((,) <$> identifier <*> optional pTypeAnnot) comma)
 
 pTypeAnnot :: Parser Type
 pTypeAnnot = colon *> pType
+
+-- Run
+parse :: Text -> Either String UntypedModule
+parse input = left errorBundlePretty (runParser (runReaderT pModule []) "capri" input)

@@ -6,7 +6,9 @@ import SyntaxInfo
 import Type
 import Name
 
-newtype Module a = Module [TopLvl a]
+data Module a
+    = Module Text [TopLvl a]
+    deriving (Show)
 
 data TopLvl a
     = TLFunc SyntaxInfo Bool Name Params TypeAnnot (Expr a)
@@ -52,7 +54,7 @@ data Lit
     deriving (Show)
 
 data Pattern
-    = PVariant Name Pattern
+    = PVariant Text Pattern
     | PLit Lit
     | PVar Text
     | PWild 
