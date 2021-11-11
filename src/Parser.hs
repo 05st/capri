@@ -191,22 +191,37 @@ pLiteral = LInt <$> decimal
 
 -- Types
 pType :: Parser Type
-pType = pArrowType <|> pBaseType
+pType = try pArrowType <|> pRowType <|> pTypeApp <?> "type"
 
 pArrowType :: Parser Type
 pArrowType = do
-    paramTypes <- sepBy pBaseType comma
+    paramTypes <- sepBy pTypeApp comma
     symbol "->"
     TArrow paramTypes <$> pType
+
+pRowType :: Parser Type
+pRowType = try pVarType <|> braces (option TRowEmpty rowExtend) 
+    where
+        rowExtend = do
+            rowsParsed <- sepBy1 row comma
+            let rowExtends = map (uncurry TRowExtend) rowsParsed
+            extended <- option TRowEmpty (symbol "|" *> pRowType)
+
+            pure (foldr ($) extended rowExtends)
+        row = (,) <$> identifier <*> (colon *> pType)
 
 pTypeApp :: Parser Type
 pTypeApp = do
     typ <- pBaseType
-    args <- angles (sepBy1 pType comma)
-    pure (TApp typ args)
+    option typ (do
+        args <- angles (sepBy1 pType comma)
+        pure (TApp typ args))
 
 pBaseType :: Parser Type
-pBaseType = pConstType <|> parens pType
+pBaseType = pConstType <|> pVarType <|> parens pType
+
+pVarType :: Parser Type
+pVarType = TVar . TV <$> identifier
 
 pConstType :: Parser Type
 pConstType = TConst <$> (userDefined <|> primitive)
