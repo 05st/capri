@@ -6,13 +6,15 @@ import Data.Char
 import Data.Text (Text, singleton)
 import Data.Void
 
+import Control.Monad.Reader
+
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
 import OperatorDef
 
-type Parser = Parsec Void Text
+type Parser = ReaderT [OperatorDef] (Parsec Void Text)
 
 reservedNames :: [Text]
 reservedNames =

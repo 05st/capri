@@ -6,6 +6,8 @@ import SyntaxInfo
 import Type
 import Name
 
+newtype Module a = Module [TopLvl a]
+
 data TopLvl a
     = TLFunc SyntaxInfo Bool Name Params TypeAnnot (Expr a)
     | TLType SyntaxInfo Name [TVar] Type
@@ -56,7 +58,14 @@ data Pattern
     | PWild 
     deriving (Show)
 
+type UntypedModule = Module ()
 type UntypedTopLvl = TopLvl ()
 type UntypedDecl = Decl ()
 type UntypedStmt = Stmt ()
 type UntypedExpr = Expr ()
+
+type TypedModule = Module Type
+type TypedTopLvl = TopLvl Type
+type TypedDecl = Decl Type
+type TypedStmt = Stmt Type
+type TypedExpr = Expr Type
