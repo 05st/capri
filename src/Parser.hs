@@ -43,7 +43,7 @@ pOperatorDefs = many pOperatorDef
 
 -- Top Level Declarations
 pTopLvlDecl :: Parser UntypedTopLvl
-pTopLvlDecl = pFuncOperDecl
+pTopLvlDecl = pFuncOperDecl <|> pTypeAliasDecl
 
 pFuncOperDecl :: Parser UntypedTopLvl
 pFuncOperDecl = do
@@ -52,11 +52,16 @@ pFuncOperDecl = do
     name <- if isOper then operator else identifier
     params <- pParams
     retAnnot <- optional pTypeAnnot
+    TLFunc synInfo isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
 
-    body <- pExpression
-    semi
-
-    pure (TLFunc synInfo isOper (Unqualified name) params retAnnot body)
+pTypeAliasDecl :: Parser UntypedTopLvl
+pTypeAliasDecl = do
+    synInfo <- pSyntaxInfo
+    symbol "type"
+    name <- typeIdentifier
+    params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
+    symbol "="
+    TLType synInfo (Unqualified name) params <$> (pType <* semi)
 
 -- Declarations
 pDecl :: Parser UntypedDecl
@@ -191,7 +196,7 @@ pLiteral = LInt <$> decimal
 
 -- Types
 pType :: Parser Type
-pType = try pArrowType <|> pRowType <|> pTypeApp <?> "type"
+pType = try pArrowType <|> pRecordType <|> pVariantType <|> pTypeApp <?> "type"
 
 pArrowType :: Parser Type
 pArrowType = do
@@ -199,13 +204,19 @@ pArrowType = do
     symbol "->"
     TArrow paramTypes <$> pType
 
+pRecordType :: Parser Type
+pRecordType = braces (TRecord <$> pRowType)
+
+pVariantType :: Parser Type
+pVariantType = angles (braces (TVariant <$> pRowType))
+
 pRowType :: Parser Type
-pRowType = try pVarType <|> braces (option TRowEmpty rowExtend) 
+pRowType = option TRowEmpty rowExtend
     where
         rowExtend = do
             rowsParsed <- sepBy1 row comma
             let rowExtends = map (uncurry TRowExtend) rowsParsed
-            extended <- option TRowEmpty (symbol "|" *> pRowType)
+            extended <- option TRowEmpty (symbol "|" *> (try pVarType <|> pRowType))
 
             pure (foldr ($) extended rowExtends)
         row = (,) <$> identifier <*> (colon *> pType)

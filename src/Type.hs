@@ -11,6 +11,7 @@ data Type
     | TApp Type [Type]
     | TArrow [Type] Type
     | TRecord Row
+    | TVariant Row
     | TRowEmpty
     | TRowExtend Text Type Row
     deriving (Show)
