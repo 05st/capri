@@ -1,3 +1,5 @@
+**Note: Everything is being rewritten in the [rewrite](https://github.com/05st/capri/tree/rewrite) branch.**
+
 # Capri
 A statically typed, functional programming language which compiles to C.
 Takes inspiration from languages such as Rust or Haskell.
