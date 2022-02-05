@@ -21,14 +21,11 @@ import Text.Megaparsec (SourcePos)
 import Debug.Trace (trace)
 
 type ModName = [Text]
+type Check = ExceptT AnalyzerError (State CheckState)
 data CheckState = CheckState
     { edges :: M.Map ModName [ModName]
     , visited :: S.Set ModName
     } deriving (Show)
-type Check = ExceptT AnalyzerError (State CheckState)
-
-getFullName :: UntypedModule -> ModName
-getFullName mod = modPath mod ++ [modName mod]
 
 showModFullName :: ModName -> String
 showModFullName parts = unpack (intercalate "::" parts)
@@ -39,8 +36,8 @@ checkDependencies modules =
         Left err -> Just err
         _ -> Nothing
     where
-        fullNames = map getFullName modules
-        initEdges = M.fromList (map (\mod -> (getFullName mod, map snd (modImports mod))) modules)
+        fullNames = map getModFullName modules
+        initEdges = M.fromList (map (\mod -> (getModFullName mod, map snd (modImports mod))) modules)
         initVisited = S.empty 
 
 checkProgram :: [ModName] -> Check ()

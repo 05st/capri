@@ -27,11 +27,11 @@ library
       Analyzer.AnalyzerError
       Analyzer.DependencyCheck
       Analyzer.Infer
+      Analyzer.Resolver
       Lexer
       Name
       OperatorDef
       Parser
-      Resolver
       Syntax
       SyntaxInfo
       Type

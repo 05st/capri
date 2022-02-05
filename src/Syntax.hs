@@ -18,8 +18,8 @@ data Module a = Module
     } deriving (Show)
 
 data TopLvl a
-    = TLFunc SyntaxInfo Bool Bool Name Params TypeAnnot (Expr a)
-    | TLType SyntaxInfo Bool Name [TVar] Type
+    = TLFunc SyntaxInfo Bool Bool Text Params TypeAnnot (Expr a)
+    | TLType SyntaxInfo Bool Text [TVar] Type
     | TLExtern Text [Type] Type
     deriving (Show)
     
@@ -80,3 +80,16 @@ type TypedTopLvl = TopLvl Type
 type TypedDecl = Decl Type
 type TypedStmt = Stmt Type
 type TypedExpr = Expr Type
+
+getModFullName :: Module a -> [Text]
+getModFullName mod = modPath mod ++ [modName mod]
+
+topLvlToName :: Module a -> TopLvl a -> [Name]
+topLvlToName mod (TLFunc _ _ _ name _ _ _) = [Qualified (getModFullName mod) name]
+topLvlToName mod (TLType _ _ name _ _) = [Qualified (getModFullName mod) name]
+topLvlToName mod TLExtern {} = []
+
+isTopLvlPub :: TopLvl a -> Bool
+isTopLvlPub (TLFunc _ isPub _ _ _ _ _) = isPub
+isTopLvlPub (TLType _ isPub _ _ _) = isPub
+isTopLvlPub TLExtern {} = False

@@ -54,7 +54,7 @@ pFuncOperDecl isPub = do
     name <- if isOper then oper <$> pOperatorDef else identifier
     params <- pParams
     retAnnot <- optional pTypeAnnot
-    TLFunc synInfo isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
+    TLFunc synInfo isPub isOper name params retAnnot <$> (pExpression <* semi)
 
 pOperatorDef :: Parser OperatorDef
 pOperatorDef = do
@@ -72,7 +72,7 @@ pTypeAliasDecl isPub = do
     name <- typeIdentifier
     params <- option [] (angles (sepBy1 (TVPlain <$> identifier) comma))
     symbol "="
-    TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
+    TLType synInfo isPub name params <$> (pType <* semi)
 
 -- Declarations
 pDecl :: Parser UntypedDecl

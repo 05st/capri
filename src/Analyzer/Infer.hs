@@ -24,4 +24,3 @@ data InferState = InferState
     , level :: Int
     } deriving (Show)
 
-
