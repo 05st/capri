@@ -1,9 +1,9 @@
 {-# Language OverloadedStrings #-}
 {-# Language TupleSections #-}
 
-module Parser where
+module Parser (Parser.parse) where
 
-import Data.Text (Text)
+import Data.Text (Text, pack, split)
 import Data.Function
 import Data.List
 
@@ -20,48 +20,59 @@ import Type
 import Name
 import OperatorDef
 import SyntaxInfo
+import Debug.Trace (trace)
+
+-- Operator defs (pre)
+pModuleOpDefs :: Parser [OperatorDef]
+pModuleOpDefs = concat <$> manyTill (try ((:[]) <$> pOperatorDef) <|> ([] <$ anySingle)) eof
 
 -- Module
 pModule :: Parser UntypedModule
 pModule = do
-    opdefs <- pOperatorDefs
+    synInfo <- pSyntaxInfo
     symbol "module"
     name <- identifier
     semi
-    Module name <$> local (const opdefs) (manyTill pTopLvlDecl eof)
-
--- Operator Pre-defs (at top)
-pOperatorDefs :: Parser [OperatorDef]
-pOperatorDefs = many pOperatorDef
+    imports <- many pImport
+    Module synInfo name [] imports <$> manyTill pTopLvlDecl eof
     where
-        pOperatorDef = do
-            assoc <- pAssoc
-            prec <- decimal
-            OperatorDef assoc prec <$> (operator <* semi)
-        pAssoc = (ALeft <$ symbol "infixl") <|> (ARight <$ symbol "infixr") <|> (ANone <$ symbol "infix")
-            <|> (APrefix <$ symbol "prefix") <|> (APostfix <$ symbol "postfix")
+        pImport = do
+            isPub <- option False (True <$ symbol "pub")
+            symbol "import"
+            (isPub,) <$> (sepBy1 identifier (symbol "::") <* semi)
 
 -- Top Level Declarations
 pTopLvlDecl :: Parser UntypedTopLvl
-pTopLvlDecl = pFuncOperDecl <|> pTypeAliasDecl
+pTopLvlDecl = do
+    isPub <- option False (True <$ symbol "pub")
+    pFuncOperDecl isPub <|> pTypeAliasDecl isPub
 
-pFuncOperDecl :: Parser UntypedTopLvl
-pFuncOperDecl = do
+pFuncOperDecl :: Bool -> Parser UntypedTopLvl
+pFuncOperDecl isPub = do
     synInfo <- pSyntaxInfo
     isOper <- (True <$ symbol "op") <|> (False <$ symbol "fn")
-    name <- if isOper then operator else identifier
+    name <- if isOper then oper <$> pOperatorDef else identifier
     params <- pParams
     retAnnot <- optional pTypeAnnot
-    TLFunc synInfo isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
+    TLFunc synInfo isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
 
-pTypeAliasDecl :: Parser UntypedTopLvl
-pTypeAliasDecl = do
+pOperatorDef :: Parser OperatorDef
+pOperatorDef = do
+    assoc <- pAssoc
+    prec <- decimal
+    OperatorDef assoc prec <$> operator
+    where
+        pAssoc = (ALeft <$ symbol "infixl") <|> (ARight <$ symbol "infixr") <|> (ANone <$ symbol "infix")
+            <|> (APrefix <$ symbol "prefix") <|> (APostfix <$ symbol "postfix")
+
+pTypeAliasDecl :: Bool -> Parser UntypedTopLvl
+pTypeAliasDecl isPub = do
     synInfo <- pSyntaxInfo
     symbol "type"
     name <- typeIdentifier
-    params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
+    params <- option [] (angles (sepBy1 (TVPlain <$> identifier) comma))
     symbol "="
-    TLType synInfo (Unqualified name) params <$> (pType <* semi)
+    TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
 
 -- Declarations
 pDecl :: Parser UntypedDecl
@@ -162,7 +173,7 @@ pCall = do
         pure (ECall synInfo () expr args))
 
 pValue :: Parser UntypedExpr
-pValue = pClosure <|> pLiteralExpr <|> try pVariable <|> parens pExpression
+pValue = pClosure <|> pLiteralExpr <|> try pVariable <|> pBlock <|> parens pExpression
 
 pClosure :: Parser UntypedExpr
 pClosure = do
@@ -183,16 +194,22 @@ pVariable = do
     EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
 
 pBlock :: Parser UntypedExpr
-pBlock = do
+pBlock = braces (do
     synInfo <- pSyntaxInfo
     decls <- many (try pDecl)
     synInfo' <- pSyntaxInfo
     result <- option (ELit synInfo' () LUnit) pExpression
-    pure (EBlock synInfo () decls result)
+    pure (EBlock synInfo () decls result))
 
 -- Literals
 pLiteral :: Parser Lit
-pLiteral = LInt <$> decimal
+pLiteral = try (LFloat <$> signed float) <|> (LInt <$> integer)
+    <|> (LChar <$> charLiteral) <|> (LString . pack <$> stringLiteral)
+    <|> (LBool True <$ symbol "true") <|> (LBool False <$ symbol "false")
+    <|> (LUnit <$ symbol "()")
+
+integer :: Parser Integer
+integer = try octal <|> try binary <|> try hexadecimal <|> signed decimal
 
 -- Types
 pType :: Parser Type
@@ -232,7 +249,7 @@ pBaseType :: Parser Type
 pBaseType = pConstType <|> pVarType <|> parens pType
 
 pVarType :: Parser Type
-pVarType = TVar . TV <$> identifier
+pVarType = TVar . TVPlain <$> identifier
 
 pConstType :: Parser Type
 pConstType = TConst <$> (userDefined <|> primitive)
@@ -268,5 +285,7 @@ pTypeAnnot :: Parser Type
 pTypeAnnot = colon *> pType
 
 -- Run
-parse :: Text -> Either String UntypedModule
-parse input = left errorBundlePretty (runParser (runReaderT pModule []) "capri" input)
+parse :: [(String, Text)] -> Either String UntypedProgram
+parse files = do
+    let opdefs = concat (concat (traverse (uncurry (runParser (runReaderT pModuleOpDefs []))) files))
+    left errorBundlePretty (traverse (uncurry (runParser (runReaderT pModule opdefs))) files)

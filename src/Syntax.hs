@@ -6,13 +6,20 @@ import SyntaxInfo
 import Type
 import Name
 
-data Module a
-    = Module Text [TopLvl a]
-    deriving (Show)
+type Program a = [Module a]
+
+type Import = (Bool, [Text])
+data Module a = Module
+    { modSynInfo :: SyntaxInfo
+    , modName :: Text
+    , modPath :: [Text]
+    , modImports :: [Import]
+    , modTopLvls :: [TopLvl a]
+    } deriving (Show)
 
 data TopLvl a
-    = TLFunc SyntaxInfo Bool Name Params TypeAnnot (Expr a)
-    | TLType SyntaxInfo Name [TVar] Type
+    = TLFunc SyntaxInfo Bool Bool Name Params TypeAnnot (Expr a)
+    | TLType SyntaxInfo Bool Name [TVar] Type
     | TLExtern Text [Type] Type
     deriving (Show)
     
@@ -60,12 +67,14 @@ data Pattern
     | PWild 
     deriving (Show)
 
+type UntypedProgram = Program ()
 type UntypedModule = Module ()
 type UntypedTopLvl = TopLvl ()
 type UntypedDecl = Decl ()
 type UntypedStmt = Stmt ()
 type UntypedExpr = Expr ()
 
+type TypedProgram = Program Type
 type TypedModule = Module Type
 type TypedTopLvl = TopLvl Type
 type TypedDecl = Decl Type

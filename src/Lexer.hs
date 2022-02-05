@@ -66,7 +66,7 @@ binary = lexeme (char '0' *> char 'b' *> L.binary)
 float :: Parser Double
 float = lexeme L.float
 
-signed :: Parser Integer -> Parser Integer
+signed :: Num a => Parser a -> Parser a
 signed p = lexeme (L.signed spaces p)
 
 identPred :: Char -> Bool

@@ -24,10 +24,14 @@ source-repository head
 
 library
   exposed-modules:
+      Analyzer.AnalyzerError
+      Analyzer.DependencyCheck
+      Analyzer.Infer
       Lexer
       Name
       OperatorDef
       Parser
+      Resolver
       Syntax
       SyntaxInfo
       Type

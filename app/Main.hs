@@ -6,11 +6,12 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
 import Parser
+import Analyzer.DependencyCheck
 
 main :: IO ()
 main = do
-    file <- head <$> getArgs
-    input <- T.readFile file
-    case parse input of
+    paths <- getArgs
+    inputs <- traverse T.readFile paths
+    case parse (zip paths inputs) of
         Left err -> putStrLn err
-        Right mod -> print mod
+        Right program -> print (checkDependencies program)
