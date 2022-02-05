@@ -55,13 +55,18 @@ checkProgram (mod : mods) = do
             visit mod
             edgesMap <- gets edges
             visitedSet <- gets visited
+
             let modEdges = M.findWithDefault [] mod edgesMap
             let nonexistentImports = filter (`S.notMember` M.keysSet edgesMap) modEdges
-            unless (null nonexistentImports)
+
+            unless (null nonexistentImports) -- Verify imported modules exist
                 $ throwError (NonexistentModules (map showModFullName nonexistentImports))
-            when (any (`S.member` visitedSet) modEdges)
+
+            when (any (`S.member` visitedSet) modEdges) -- Check for any cycles
                 $ throwError (CyclicDependencyError (map showModFullName (reverse (mod : cycle))))
+
             mapM_ (dfs (mod : cycle)) modEdges
+
         visit mod = do
             state <- get
             put (state { visited = S.insert mod (visited state) })
