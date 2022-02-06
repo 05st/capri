@@ -41,10 +41,16 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         }
         initPubMap = M.fromList $ concatMap (\mod -> concatMap (topLvlEntry mod) (modTopLvls mod)) prog
         topLvlEntry _ TLExtern {} = []
-        topLvlEntry mod tl = [(head $ topLvlToName mod tl, isTopLvlPub tl)]
+        topLvlEntry mod tl = [(head $ fullNameHelper mod tl, isTopLvlPub tl)]
         initImportsMap = M.fromList $ map (\mod -> (getModFullName mod, modImports mod)) prog
-        initNameSet = S.fromList $ concatMap (\mod -> concatMap (topLvlToName mod) (modTopLvls mod)) prog
+        initNameSet = S.fromList $ concatMap (\mod -> concatMap (fullNameHelper mod) (modTopLvls mod)) prog
         -- ^ contains all of the top level declarations of each module, this is so mutual recursion works
+        
+        fullNameHelper mod (TLFunc _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
+        fullNameHelper mod (TLType _ _ (Unqualified name) _ _) = [Qualified (getModFullName mod) name]
+        fullNameHelper _ (TLFunc _ _ _ name _ _ _) = [name]
+        fullNameHelper _ (TLType _ _ name _ _) = [name]
+        fullNameHelper mod TLExtern {} = []
 
 resolveModule :: UntypedModule -> Resolve UntypedModule
 resolveModule mod = do

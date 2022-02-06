@@ -8,6 +8,7 @@ import qualified Data.Text.IO as T
 import Parser
 import Analyzer.DependencyCheck
 import Analyzer.Resolver
+import Analyzer.Infer
 
 main :: IO ()
 main = do
@@ -16,5 +17,10 @@ main = do
     case parse (zip paths inputs) of
         Left err -> putStrLn err
         Right program -> do
-            print (checkDependencies program)
-            print (resolveProgram program)
+            case checkDependencies program of
+                Just err -> print err
+                Nothing -> case resolveProgram program of
+                    Left err -> print err
+                    Right resolved -> case inferProgram resolved of
+                        Left err -> print err
+                        Right typed -> print typed

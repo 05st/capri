@@ -18,7 +18,7 @@ data Type
 
 newtype TVar
     = TV Text
-    deriving (Show)
+    deriving (Show, Eq, Ord)
 
 data PolyType
     = Forall [TVar] Type

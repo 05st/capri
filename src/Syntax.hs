@@ -84,12 +84,10 @@ type TypedExpr = Expr Type
 getModFullName :: Module a -> [Text]
 getModFullName mod = modPath mod ++ [modName mod]
 
-topLvlToName :: Module a -> TopLvl a -> [Name]
-topLvlToName mod (TLFunc _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
-topLvlToName mod (TLType _ _ (Unqualified name) _ _) = [Qualified (getModFullName mod) name]
-topLvlToName _ (TLFunc _ _ _ name _ _ _) = [name]
-topLvlToName _ (TLType _ _ name _ _) = [name]
-topLvlToName mod TLExtern {} = []
+topLvlToName :: TopLvl a -> Name
+topLvlToName (TLFunc _ _ _ name _ _ _) = name
+topLvlToName (TLType _ _ name _ _) = name
+topLvlToName (TLExtern name _ _) = Unqualified name
 
 isTopLvlPub :: TopLvl a -> Bool
 isTopLvlPub (TLFunc _ isPub _ _ _ _ _) = isPub

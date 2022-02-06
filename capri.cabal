@@ -28,6 +28,7 @@ library
       Analyzer.DependencyCheck
       Analyzer.Infer
       Analyzer.Resolver
+      Analyzer.Substitution
       Lexer
       Name
       OperatorDef
