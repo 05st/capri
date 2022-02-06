@@ -55,35 +55,44 @@ resolveModule mod = do
 
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
-    TLFunc info isPub isOper name params typeAnnot expr -> do
-        eset <- gets extraSet
-        scope <- prependModulePath []
-        let fullName = Qualified scope name
-        when (fullName `S.member` eset)
-            $ throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Redefinition of " ++ show fullName))
-        state <- get
-        put (state { extraSet = S.insert fullName eset })
-
-        insertNameToSet name
+    TLFunc info isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
+        fullName <- topLvlDefinition info unqual
         typeAnnot' <- resolveTypeAnnot info typeAnnot
-        local (++ [name]) (do
+
+        local (++ [unqual]) (do
             let (pnames, pannots) = unzip params
             mapM_ insertNameToSet pnames
             pannots' <- traverse (resolveTypeAnnot info) pannots
             expr' <- resolveExpr expr
-            return (TLFunc info isPub isOper name (zip pnames pannots') typeAnnot' expr'))
-    TLType info isPub name tvars typ -> TLType info isPub name tvars <$> resolveType info typ
+            return (TLFunc info isPub isOper fullName (zip pnames pannots') typeAnnot' expr'))
+
+    TLType info isPub name@(Unqualified unqual) tvars typ -> do
+        topLvlDefinition info unqual
+        TLType info isPub name tvars <$> resolveType info typ
+
     tl@TLExtern {} -> return tl
+    _ -> undefined
+    where
+        topLvlDefinition info unqual = do
+            eset <- gets extraSet
+            scope <- prependModulePath []
+            let fullName = Qualified scope unqual
+            when (fullName `S.member` eset)
+                $ throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Redefinition of " ++ show fullName))
+            state <- get
+            put (state { extraSet = S.insert fullName eset })
+            return fullName
 
 resolveDecl :: UntypedDecl -> Resolve UntypedDecl
 resolveDecl = \case
     DStmt stmt -> DStmt <$> resolveStmt stmt
     DVar info isMut name typeAnnot expr -> do
+        let Unqualified unqual = name
         expr' <- resolveExpr expr
         typeAnnot' <- resolveTypeAnnot info typeAnnot
-        checkNameDuplicate info name
-        insertNameToSet name
-        return (DVar info isMut name typeAnnot' expr')
+        checkNameDuplicate info unqual
+        fullName <- insertNameToSet unqual
+        return (DVar info isMut fullName typeAnnot' expr')
 
 resolveStmt :: UntypedStmt -> Resolve UntypedStmt
 resolveStmt = \case
@@ -161,13 +170,15 @@ checkNameDuplicate info name = do
     when (Qualified fullScope name `S.member` set)
         $ throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Redefinition of " ++ show name))
 
-insertNameToSet :: Text -> Resolve ()
+insertNameToSet :: Text -> Resolve Name
 insertNameToSet name = do
     curLocalScope <- ask
     fullScope <- prependModulePath curLocalScope
     set <- gets nameSet
     state <- get
-    put (state { nameSet = S.insert (Qualified fullScope name) set })
+    let fullName = Qualified fullScope name
+    put (state { nameSet = S.insert fullName set })
+    return fullName
 
 resolveName :: SyntaxInfo -> Name -> Resolve Name
 resolveName info name =

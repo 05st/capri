@@ -24,3 +24,8 @@ data InferState = InferState
     , level :: Int
     } deriving (Show)
 
+inferProgram :: UntypedProgram -> Either AnalyzerError TypedProgram
+inferProgram prog = undefined
+
+inferModule :: UntypedModule -> Infer TypedModule
+inferModule mod = undefined

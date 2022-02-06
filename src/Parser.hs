@@ -54,7 +54,7 @@ pFuncOperDecl isPub = do
     name <- if isOper then oper <$> pOperatorDef else identifier
     params <- pParams
     retAnnot <- optional pTypeAnnot
-    TLFunc synInfo isPub isOper name params retAnnot <$> (pExpression <* semi)
+    TLFunc synInfo isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
 
 pOperatorDef :: Parser OperatorDef
 pOperatorDef = do
@@ -70,9 +70,9 @@ pTypeAliasDecl isPub = do
     synInfo <- pSyntaxInfo
     symbol "type"
     name <- typeIdentifier
-    params <- option [] (angles (sepBy1 (TVPlain <$> identifier) comma))
+    params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
     symbol "="
-    TLType synInfo isPub name params <$> (pType <* semi)
+    TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
 
 -- Declarations
 pDecl :: Parser UntypedDecl
@@ -86,7 +86,7 @@ pVarDecl = do
     name <- identifier
     annot <- optional pTypeAnnot
     symbol "="
-    DVar synInfo isMut name annot <$> (pExpression <* semi)
+    DVar synInfo isMut (Unqualified name) annot <$> (pExpression <* semi)
 
 -- Statements
 pStmt :: Parser UntypedStmt
@@ -249,7 +249,7 @@ pBaseType :: Parser Type
 pBaseType = pConstType <|> pVarType <|> parens pType
 
 pVarType :: Parser Type
-pVarType = TVar . TVPlain <$> identifier
+pVarType = TVar . TV <$> identifier
 
 pConstType :: Parser Type
 pConstType = TConst <$> (userDefined <|> primitive)

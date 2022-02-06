@@ -16,9 +16,19 @@ data Type
     | TRowExtend Text Type Row
     deriving (Show)
 
+newtype TVar
+    = TV Text
+    deriving (Show)
+
+data PolyType
+    = Forall [TVar] Type
+    deriving (Show)
+
+{-
 data TVar
     = TVPlain Text
     | TVUnbound Text Int
     | TVLink Type
     | TGeneric Text
     deriving (Show)
+-}
