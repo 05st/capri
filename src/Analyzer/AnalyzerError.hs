@@ -1,5 +1,4 @@
 {-# Language OverloadedStrings #-}
-{-# Language LambdaCase #-}
 
 module Analyzer.AnalyzerError where
 
@@ -9,9 +8,11 @@ import Text.Megaparsec.Pos (SourcePos, sourcePosPretty)
 data AnalyzerError
     = GenericAnalyzerError SourcePos String
     | CyclicDependencyError [String] 
-    | NonexistentModules [String] -- add import source positions
+    | NonexistentModulesError [String] -- add import source positions
+    | UndefinedError SourcePos String
 
 instance Show AnalyzerError where
     show (GenericAnalyzerError pos msg) = "ERROR: " ++ msg ++ " (" ++ sourcePosPretty pos ++ ")"
     show (CyclicDependencyError cycle) = "ERROR: Cyclic dependencies " ++ intercalate " -> " (cycle ++ [head cycle])
-    show (NonexistentModules mods) = "ERROR: Nonexistent module(s) " ++ intercalate ", " mods
+    show (NonexistentModulesError mods) = "ERROR: Nonexistent module(s) " ++ intercalate ", " mods
+    show (UndefinedError pos name) = "ERROR: " ++ "Undefined '" ++ name ++ "' (" ++ sourcePosPretty pos ++ ")"

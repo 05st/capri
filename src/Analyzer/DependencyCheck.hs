@@ -1,6 +1,4 @@
 {-# Language OverloadedStrings #-}
-{-# Language LambdaCase #-}
-{-# Language TupleSections #-}
 {-# Language FlexibleContexts #-}
 
 module Analyzer.DependencyCheck where
@@ -57,7 +55,7 @@ checkProgram (mod : mods) = do
             let nonexistentImports = filter (`S.notMember` M.keysSet edgesMap) modEdges
 
             unless (null nonexistentImports) -- Verify imported modules exist
-                $ throwError (NonexistentModules (map showModFullName nonexistentImports))
+                $ throwError (NonexistentModulesError (map showModFullName nonexistentImports))
 
             when (any (`S.member` visitedSet) modEdges) -- Check for any cycles
                 $ throwError (CyclicDependencyError (map showModFullName (reverse (mod : cycle))))

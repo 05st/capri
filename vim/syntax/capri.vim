@@ -60,7 +60,7 @@ syn region Comment start="/\*" end="\*/" contains=Todo
 syn match Function "\w\(\w\)*("he=e-1,me=e-1
 
 " Built-in types
-syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char bool unit
+syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str bool unit
 
 " Other
 syn match Ignore "<{"

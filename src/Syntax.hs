@@ -1,3 +1,5 @@
+{-# Language LambdaCase #-}
+
 module Syntax where
 
 import Data.Text (Text)
@@ -93,3 +95,17 @@ isTopLvlPub :: TopLvl a -> Bool
 isTopLvlPub (TLFunc _ isPub _ _ _ _ _) = isPub
 isTopLvlPub (TLType _ isPub _ _ _) = isPub
 isTopLvlPub TLExtern {} = False
+
+exprType :: TypedExpr -> Type
+exprType = \case
+    ELit _ t _ -> t
+    EVar _ t _ _ -> t
+    EAssign _ t _ _ -> t
+    EBlock _ t _ _ -> t
+    EIf _ t _ _ _ -> t
+    EMatch _ t _ _ -> t
+    EBinOp _ t _ _ _ -> t
+    EUnaOp _ t _ _ -> t
+    EClosure _ t _ _ _ _ -> t
+    ECall _ t _ _ -> t
+    ECast _ t _ -> t

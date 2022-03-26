@@ -1,3 +1,6 @@
+{-# Language PatternSynonyms #-}
+{-# Language OverloadedStrings #-}
+
 module Type where
 
 import Data.Text (Text)
@@ -32,3 +35,18 @@ data TVar
     | TGeneric Text
     deriving (Show)
 -}
+
+pattern TInt8 = TConst (Unqualified "i8")
+pattern TInt16 = TConst (Unqualified "i16")
+pattern TInt32 = TConst (Unqualified "i32")
+pattern TInt64 = TConst (Unqualified "i64")
+pattern TUInt8 = TConst (Unqualified "u8")
+pattern TUInt16 = TConst (Unqualified "u16")
+pattern TUInt32 = TConst (Unqualified "u32")
+pattern TUInt64 = TConst (Unqualified "u64")
+pattern TFloat32 = TConst (Unqualified "f32")
+pattern TFloat64 = TConst (Unqualified "f64")
+pattern TChar = TConst (Unqualified "char")
+pattern TString = TConst (Unqualified "str")
+pattern TBool = TConst (Unqualified "bool")
+pattern TUnit = TConst (Unqualified "unit")

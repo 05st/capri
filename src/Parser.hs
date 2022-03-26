@@ -256,7 +256,7 @@ pConstType = TConst <$> (userDefined <|> primitive)
     where
         userDefined = Unqualified <$> typeIdentifier
         primitive = choice $ map (\s -> Unqualified s <$ symbol s)
-            ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "bool", "unit"]
+            ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "str", "bool", "unit"]
 
 -- Patterns
 pPattern :: Parser Pattern
