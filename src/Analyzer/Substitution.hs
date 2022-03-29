@@ -4,6 +4,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 import Type
+import Syntax
 
 type Substitution
     = M.Map TVar Type
@@ -25,14 +26,18 @@ instance Substitutable Type where
     apply s t@(TVar tv) = M.findWithDefault t tv s
     apply s (TApp t1 ts) = apply s t1 `TApp` apply s ts
     apply s (TArrow ts rt) = apply s ts `TArrow` apply s rt
-    apply s (TRecord row) = apply s row
-    apply s (TVariant row) = apply s row
+    apply s (TRecord row) = TRecord (apply s row)
+    apply s (TVariant row) = TVariant (apply s row)
     apply s TRowEmpty = TRowEmpty
     apply s (TRowExtend l typ row) = TRowExtend l (apply s typ) (apply s row)
 
 instance Substitutable PolyType where
     tvs (Forall vs typ) = tvs typ `S.difference` S.fromList vs
     apply s (Forall vs typ) = Forall vs (apply (foldr M.delete s vs) typ)
+
+instance Substitutable Constraint where
+    tvs (Constraint _ a b) = tvs a `S.union` tvs b
+    apply s (Constraint pos a b) = Constraint pos (apply s a) (apply s b)
 
 instance Substitutable a => Substitutable [a] where
     tvs = foldr (S.union . tvs) S.empty

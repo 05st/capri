@@ -1,9 +1,13 @@
 {-# Language PatternSynonyms #-}
 {-# Language OverloadedStrings #-}
+{-# Language DeriveDataTypeable #-}
 
 module Type where
 
 import Data.Text (Text)
+import Data.List
+import Data.Data
+import Text.Megaparsec (SourcePos)
 
 import Name
 
@@ -17,11 +21,11 @@ data Type
     | TVariant Row
     | TRowEmpty
     | TRowExtend Text Type Row
-    deriving (Show)
+    deriving (Show, Eq, Data)
 
 newtype TVar
     = TV Text
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq, Ord, Data)
 
 data PolyType
     = Forall [TVar] Type
@@ -35,6 +39,10 @@ data TVar
     | TGeneric Text
     deriving (Show)
 -}
+
+data Constraint
+    = Constraint SourcePos Type Type
+    deriving (Show)
 
 pattern TInt8 = TConst (Unqualified "i8")
 pattern TInt16 = TConst (Unqualified "i16")
@@ -50,3 +58,11 @@ pattern TChar = TConst (Unqualified "char")
 pattern TString = TConst (Unqualified "str")
 pattern TBool = TConst (Unqualified "bool")
 pattern TUnit = TConst (Unqualified "unit")
+
+{-
+instance Show Type where
+    show (TConst name) = show name
+    show (TVar tv) = show tv
+    show (TApp a bs) = show a ++ "<" ++ intercalate ", " (map show bs) ++ ">"
+    show (TArrow ps rt) = intercalate ", " (map show ps) ++ " -> " ++ show rt
+-}

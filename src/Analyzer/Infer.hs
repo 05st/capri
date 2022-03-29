@@ -6,10 +6,14 @@ module Analyzer.Infer where
 
 import Data.Maybe
 import Data.Text (Text, pack)
+import Data.Data
+import Data.Generics.Uniplate.Data
+import Data.Functor.Identity
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.State
 import Control.Monad.Except
+import Control.Monad.Reader
 
 import Text.Megaparsec.Pos (SourcePos)
 
@@ -34,12 +38,13 @@ data InferState = InferState
     , constraints :: [Constraint]
     } deriving (Show)
 
-data Constraint
-    = Constraint SourcePos Type Type
-    deriving (Show)
-
 inferProgram :: UntypedProgram -> Either AnalyzerError TypedProgram
-inferProgram prog = evalState (runExceptT (preInference prog *> traverse inferModule prog)) initInferState
+inferProgram prog =
+    case runState (runExceptT (preInference prog *> traverse inferModule prog)) initInferState of
+        (Left err, _) -> Left err
+        (Right prog', state) -> do
+            subst <- runSolve (typeAliasEnv state) (constraints state)
+            return $ fmap (fmap (apply subst)) prog'
     where
         initInferState = InferState { environment = M.empty, isMutEnv = M.empty, typeAliasEnv = M.empty, preTopLvlEnv = M.empty, freshCount = 0, constraints = [] }
 
@@ -52,20 +57,96 @@ preInference prog = mapM_ initializeTopLvl (concatMap modTopLvls prog)
             typeVar <- fresh
             let TVar tv = typeVar
             put (state { preTopLvlEnv = M.insert name tv env })
-        initializeTopLvl (TLType _ isPub name tvars typ) = do
+        initializeTopLvl (TLType info isPub name tvars typ) = do
             env <- gets typeAliasEnv
-            state <- get
-            put (state { typeAliasEnv = M.insert name typ env })
+            case M.lookup name env of
+                Just _ -> throwError (RedefinitionError (syntaxInfoSourcePos info) (show name))
+                Nothing -> do
+                    state <- get
+                    put (state { typeAliasEnv = M.insert name typ env })
         initializeTopLvl TLExtern {} = undefined
 
 inferModule :: UntypedModule -> Infer TypedModule
-inferModule mod = do
+inferModule (Module info name path imports topLvls) = do
     env <- gets environment
-    trace (show env) $ return ()
-    undefined
+    -- trace (show env) $ return ()
+    topLvls' <- traverse inferTopLvl topLvls
+    return (Module info name path imports topLvls')
+
+inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
+inferTopLvl = \case
+    TLFunc info isPub isOper name params annot body -> do
+        alreadyDefined <- exists name
+        when alreadyDefined (throwError (RedefinitionError (syntaxInfoSourcePos info) (show name)))
+        (body', typ) <- inferFn (syntaxInfoSourcePos info) name params annot body
+        return (TLFunc info isPub isOper name params annot body')
+    TLType info isPub name typeParams mainTyp -> return (TLType info isPub name typeParams mainTyp)
+    TLExtern name ptypes rtype -> return (TLExtern name ptypes rtype)
+
+inferFn :: SourcePos -> Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
+inferFn pos name params rtann body = do
+    let (pnames, panns) = unzip params
+    ptypes <- traverse (const fresh) params
+    sequence_ [when (isJust pann) (constrain $ Constraint pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes panns]
+
+    let ptypesSchemes = map (Forall []) ptypes
+    let nenv = M.fromList (zip (map Unqualified pnames) ptypesSchemes) -- Default mutability is false when variable exists in type env (maybe make explicit?)
+    body' <- scoped (`M.union` nenv) (inferExpr body)
+    let rtype = exprType body'
+    consts <- gets constraints
+    typeAliases <- gets typeAliasEnv
+    subst <- liftEither (runSolve typeAliases consts)
+    env <- gets environment
+    let typ = apply subst (TArrow ptypes rtype)
+        scheme = Forall [] typ -- TODO: generalize env typ for polymorphism
+
+    let (TArrow ptypes' rtype') = typ
+    when (isJust rtann) (constrain $ Constraint pos rtype' (fromJust rtann))
+    sequence_ [when (isJust pann) (constrain $ Constraint pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes' panns]
+
+    mapM_ (constrain . Constraint pos rtype') (searchReturns body')
+
+    state <- get
+    let tmpsEnv = preTopLvlEnv state
+    constrain (Constraint pos typ (TVar (fromJust (M.lookup name tmpsEnv))))
+    put (state { preTopLvlEnv = M.delete name tmpsEnv })
+
+    state <- get
+    put (state { environment = M.insert name scheme (environment state) })
+    return (body', typ)
 
 inferDecl :: UntypedDecl -> Infer TypedDecl
-inferDecl = undefined
+inferDecl = \case
+    DVar info mut name annot expr -> do
+        alreadyDefined <- exists name
+        when alreadyDefined (throwError (RedefinitionError (syntaxInfoSourcePos info) (show name)))
+        expr' <- inferExpr expr
+        let etype = exprType expr'
+        consts <- gets constraints
+        typeAliases <- gets typeAliasEnv
+        subst <- liftEither (runSolve typeAliases consts)
+        env <- gets environment
+        let typ = apply subst etype
+            scheme = Forall [] typ -- TODO: generalize (maybe?)
+        when (isJust annot) (constrain (Constraint (syntaxInfoSourcePos info) typ (fromJust annot)))
+        state <- get
+        put (state {
+            environment = M.insert name scheme (environment state),
+            isMutEnv = M.insert name mut (isMutEnv state)
+        })
+        return (DVar info mut name annot expr')
+    DStmt s -> DStmt <$> inferStmt s
+
+inferStmt :: UntypedStmt -> Infer TypedStmt
+inferStmt = \case
+    SRet expr -> SRet <$> inferExpr expr
+    SWhile info cond body -> do
+        cond' <- inferExpr cond
+        let ctype = exprType cond'
+        body' <- inferExpr body
+        constrain (Constraint (syntaxInfoSourcePos info) ctype TBool)
+        return (SWhile info cond' body')
+    SExpr expr -> SExpr <$> inferExpr expr
 
 inferExpr :: UntypedExpr -> Infer TypedExpr
 inferExpr = \case
@@ -81,12 +162,19 @@ inferExpr = \case
         let ltype = exprType l'
         let rtype = exprType r'
         constrain (Constraint (syntaxInfoSourcePos info) ltype rtype)
-        let expr' = EAssign info ltype l' r'
-        case l' of
+        case l of
             EVar vinfo _ _ name -> do
                 mut <- lookupMut vinfo name
                 unless mut (throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Cannot assign to immutable variable '" ++ show name ++ "'")))
-                return expr'
+                return (EAssign info ltype l' r')
+            ERecordSelect vinfo _ record label -> do -- Desugar a.b = c into a = {b = c | {a - b}}
+                case record of
+                    EVar vinfo' _ _ name -> do
+                        mut <- lookupMut vinfo' name
+                        unless mut (throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Cannot assign to immutable variable '" ++ show name ++ "'")))
+                    _ -> return ()
+                let desugared = EAssign info () record (ERecordExtend vinfo () r label (ERecordRestrict vinfo () record label))
+                inferExpr desugared
             _ -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) "Cannot assign to non-lvalue")
 
     EBlock info _ decls expr -> do
@@ -107,21 +195,92 @@ inferExpr = \case
         constrain (Constraint (syntaxInfoSourcePos info) ttype ftype)
         return (EIf info ttype cond' texpr' fexpr')
     
-    EMatch info _ mexpr branches -> do
-        mexpr' <- inferExpr mexpr
-        let mtype = exprType mexpr'
-        (branches', btypes) <- unzip <$> traverse (inferBranch info mtype) branches
-        case btypes of
-            [] -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) "Empty match expression")
-            (btype : rest) -> (EMatch info btype mexpr' branches') <$ mapM_ (constrain . Constraint (syntaxInfoSourcePos info) btype) rest
+    EMatch info _ mexpr branches -> undefined
 
-inferBranch :: SyntaxInfo -> Type -> (Pattern, UntypedExpr) -> Infer ((Pattern, TypedExpr), Type)
-inferBranch info mt (pat, expr) = do
-    let pos = syntaxInfoSourcePos info
-    (pt, vars) <- inferPattern pos pat
-    constrain (Constraint pos pt mt)
-    expr' <- scoped (M.fromList vars `M.union`) (inferExpr expr)
-    return ((pat, expr'), exprType expr')
+    EBinOp info _ oper a b -> do
+        a' <- inferExpr a
+        b' <- inferExpr b
+        let at = exprType a'
+        let bt = exprType b'
+        case oper of
+            _ | extractName oper `elem` ["+", "-", "*", "/", "%"] -> do -- TODO
+                return (EBinOp info at oper a' b')
+            _ | extractName oper `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
+                return (EBinOp info TBool oper a' b')
+            _ | extractName oper `elem` ["||", "&&"] -> do
+                constrain (Constraint (syntaxInfoSourcePos info) at TBool)
+                constrain (Constraint (syntaxInfoSourcePos info) bt TBool)
+                return (EBinOp info TBool oper a' b')
+            _ -> do
+                optype <- lookupType info oper
+                rt <- fresh
+                let ft = TArrow [at, bt] rt
+                constrain (Constraint (syntaxInfoSourcePos info) optype ft)
+                return (EBinOp info rt oper a' b')
+
+    EUnaOp info _ oper expr -> do
+        a' <- inferExpr expr
+        let at = exprType a'
+        case oper of
+            _ | extractName oper == "-" -> do
+                return (EUnaOp info at oper a')
+            _ -> do
+                optype <- lookupType info oper
+                rt <- fresh
+                constrain (Constraint (syntaxInfoSourcePos info) optype (TArrow [at] rt))
+                return (EUnaOp info rt oper a')
+
+    EClosure info _ closedVars params rtann body -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) "Closures not implemented yet")
+
+    ECall info _ expr args -> do
+        a' <- inferExpr expr
+        let at = exprType a'
+        bs' <- traverse inferExpr args
+        let bts = map exprType bs'
+        rt <- fresh
+        constrain (Constraint (syntaxInfoSourcePos info) at (TArrow bts rt))
+        return (ECall info rt a' bs')
+
+    ECast info targ expr -> do
+        expr' <- inferExpr expr
+        return (ECast info targ expr') -- TODO
+
+    ERecordEmpty info _ -> return (ERecordEmpty info (TRecord TRowEmpty))
+    
+    ERecordSelect info _ record label -> do
+        restRowTyp <- fresh
+        fieldTyp <- fresh
+        let paramTyp = TRecord (TRowExtend label fieldTyp restRowTyp)
+        let returnTyp = fieldTyp
+        record' <- inferExpr record
+        let recordTyp = exprType record'
+        constrain (Constraint (syntaxInfoSourcePos info) paramTyp recordTyp)
+        return (ERecordSelect info returnTyp record' label)
+    
+    ERecordRestrict info _ record label -> do
+        restRowTyp <- fresh
+        fieldTyp <- fresh
+        let paramTyp = TRecord (TRowExtend label fieldTyp restRowTyp)
+        let returnTyp = TRecord restRowTyp
+        record' <- inferExpr record
+        let recordTyp = exprType record'
+        constrain (Constraint (syntaxInfoSourcePos info) paramTyp recordTyp)
+        return (ERecordRestrict info returnTyp record' label)
+    
+    ERecordExtend info _ expr label record -> do
+        expr' <- inferExpr expr
+        record' <- inferExpr record
+        let etype = exprType expr'
+        let rtype = exprType record'
+        restRowTyp <- fresh
+        fieldTyp <- fresh
+        let param1Typ = fieldTyp
+        let param2Typ = TRecord restRowTyp
+        let returnTyp = TRecord (TRowExtend label fieldTyp restRowTyp)
+        let pos = syntaxInfoSourcePos info
+        constrain (Constraint pos param1Typ etype)
+        constrain (Constraint pos param2Typ rtype)
+        return (ERecordExtend info returnTyp expr' label record')
 
 inferLit :: Lit -> Type
 inferLit = \case
@@ -177,6 +336,9 @@ lookupType info name = fst <$> lookupVar info name
 lookupMut :: SyntaxInfo -> Name -> Infer Bool
 lookupMut info name = snd <$> lookupVar info name
 
+exists :: Name -> Infer Bool
+exists name = gets ((isJust . M.lookup name) . environment) -- Doesn't check temp env for top levels
+
 scoped :: (Env -> Env) -> Infer a -> Infer a
 scoped fn m = do
     state <- get
@@ -186,3 +348,63 @@ scoped fn m = do
     state' <- get
     put (state' { environment = env })
     return res
+
+searchReturns :: TypedExpr -> [Type]
+searchReturns = exprs
+    where
+        exprs = concatMap exprsF . universe
+        exprsF (EBlock _ _ ds _) = concatMap decls ds
+        exprsF x = []
+        decls = concatMap declsF . universe
+        declsF (DStmt s) = stmts s
+        declsF x = []
+        stmts = concatMap stmtsF . universe
+        stmtsF (SRet e) = [exprType e]
+        stmtsF x = []
+
+-- Unification
+type Solve = ExceptT AnalyzerError (Reader (M.Map Name Type))
+
+compose :: Substitution -> Substitution -> Substitution
+compose a b = M.map (apply a) b `M.union` a
+
+unify :: SourcePos -> Type -> Type -> Solve Substitution
+unify _ a b | a == b = return M.empty
+unify pos (TVar v) t = bind pos v t
+unify pos t (TVar v) = bind pos v t
+unify pos a@(TConst c1) b@(TConst c2)
+    | c1 /= c2 = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
+    | otherwise = return M.empty
+unify pos (TApp a1 bs1) (TApp a2 bs2) = unifyMany pos (a1 : bs1) (a2 : bs2)
+unify pos (TArrow ps r) (TArrow ps2 r2) = unifyMany pos (r : ps) (r2 : ps2)
+unify pos (TRecord row1) (TRecord row2) = unify pos row1 row2
+unify pos (TVariant row1) (TVariant row2) = unify pos row1 row2
+unify pos TRowEmpty TRowEmpty = return M.empty
+unify pos a@(TRowExtend label1 ty1 restRow1) b@(TRowExtend label2 ty2 restRow2)
+    | label1 /= label2 = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
+    | otherwise = unifyMany pos [ty1, restRow1] [ty2, restRow2]
+unify pos a b = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
+
+unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution
+unifyMany pos (t1 : ts1) (t2 : ts2) = do
+    su1 <- unify pos t1 t2
+    su2 <- unifyMany pos (apply su1 ts1) (apply su1 ts2)
+    return (su2 `compose` su1)
+unifyMany _ _ _ = return M.empty
+
+bind :: SourcePos -> TVar -> Type -> Solve Substitution
+bind pos v t
+    | v `S.member` tvs t = throwError (GenericAnalyzerError pos ("Infinite type " ++ show v ++ " ~ " ++ show t))
+    | otherwise = return $ M.singleton v t 
+
+solve :: Substitution -> [Constraint] -> Solve Substitution
+solve s c =
+    case c of
+        [] -> return s
+        (Constraint pos t1 t2 : cs) -> do
+            s1 <- unify pos t1 t2
+            let nsub = s1 `compose` s
+            solve (s1 `compose` s) (apply s1 cs)
+
+runSolve :: M.Map Name Type -> [Constraint] -> Either AnalyzerError Substitution
+runSolve typeAliases cs = runReader (runExceptT $ solve M.empty cs) typeAliases

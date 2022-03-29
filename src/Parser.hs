@@ -45,7 +45,7 @@ pModule = do
 pTopLvlDecl :: Parser UntypedTopLvl
 pTopLvlDecl = do
     isPub <- option False (True <$ symbol "pub")
-    pFuncOperDecl isPub <|> pTypeAliasDecl isPub
+    pFuncOperDecl isPub <|> pTypeAliasDecl isPub <|> pExternDecl
 
 pFuncOperDecl :: Bool -> Parser UntypedTopLvl
 pFuncOperDecl isPub = do
@@ -73,6 +73,13 @@ pTypeAliasDecl isPub = do
     params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
     symbol "="
     TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
+
+pExternDecl :: Parser UntypedTopLvl
+pExternDecl = do
+    symbol "extern"
+    name <- identifier
+    typs <- parens (sepBy pConstType comma)
+    TLExtern name typs <$> (pTypeAnnot <* semi)
 
 -- Declarations
 pDecl :: Parser UntypedDecl
@@ -159,10 +166,18 @@ pCast = do
 pAssign :: Parser UntypedExpr
 pAssign = do
     synInfo <- pSyntaxInfo
-    lhs <- pCall
+    lhs <- pRecordSelect
     option lhs (do
         symbol "="
         EAssign synInfo () lhs <$> pExpression)
+
+pRecordSelect :: Parser UntypedExpr
+pRecordSelect = do
+    expr <- pCall
+    synInfo <- pSyntaxInfo
+    option expr (do
+        dot
+        ERecordSelect synInfo () expr <$> identifier)
 
 pCall :: Parser UntypedExpr
 pCall = do
@@ -173,7 +188,7 @@ pCall = do
         pure (ECall synInfo () expr args))
 
 pValue :: Parser UntypedExpr
-pValue = pClosure <|> pLiteralExpr <|> try pVariable <|> pBlock <|> parens pExpression
+pValue = pClosure <|> pLiteralExpr <|> try pVariable <|> try pRecordRestrict <|> try pRecord <|> pBlock <|> parens pExpression
 
 pClosure :: Parser UntypedExpr
 pClosure = do
@@ -192,6 +207,22 @@ pVariable :: Parser UntypedExpr
 pVariable = do
     synInfo <- pSyntaxInfo
     EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
+
+pRecord :: Parser UntypedExpr
+pRecord = do
+    synInfo <- pSyntaxInfo
+    (items, extends) <- braces ((,) <$> sepBy recordItem comma <*> recordExtend synInfo)
+    let result = foldr (.) (const extends) [ERecordExtend synInfo () label expr | (expr, label) <- items] ()
+    return result
+    where
+        recordItem = (,) <$> identifier <*> (symbol "=" *> pExpression)
+        recordExtend info = option (ERecordEmpty info ()) (symbol "|" *> pExpression)
+
+pRecordRestrict :: Parser UntypedExpr
+pRecordRestrict = do
+    synInfo <- pSyntaxInfo
+    (expr, label) <- braces ((,) <$> pExpression <*> (symbol "-" *> identifier))
+    return (ERecordRestrict synInfo () expr label)
 
 pBlock :: Parser UntypedExpr
 pBlock = braces (do

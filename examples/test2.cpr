@@ -1,0 +1,11 @@
+module main;
+
+fn main() {
+    let mut test = {a = 1, b = false | {c = 'L'}};
+    let empty = {};
+    test.a;
+
+    // These two are equivalent
+    test.a = 2; 
+    test = {a = 2 | {test - a}};
+};

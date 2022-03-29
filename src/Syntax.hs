@@ -1,8 +1,11 @@
 {-# Language LambdaCase #-}
+{-# Language DeriveFunctor #-}
+{-# Language DeriveDataTypeable #-}
 
 module Syntax where
 
 import Data.Text (Text)
+import Data.Data
 
 import SyntaxInfo
 import Type
@@ -17,24 +20,24 @@ data Module a = Module
     , modPath :: [Text]
     , modImports :: [Import]
     , modTopLvls :: [TopLvl a]
-    } deriving (Show)
+    } deriving (Show, Functor)
 
 data TopLvl a
     = TLFunc SyntaxInfo Bool Bool Name Params TypeAnnot (Expr a)
     | TLType SyntaxInfo Bool Name [TVar] Type
     | TLExtern Text [Type] Type
-    deriving (Show)
+    deriving (Show, Functor)
     
 data Decl a
     = DStmt (Stmt a)
     | DVar SyntaxInfo Bool Name TypeAnnot (Expr a)
-    deriving (Show)
+    deriving (Show, Functor, Data)
 
 data Stmt a
     = SExpr (Expr a)
     | SRet (Expr a)
     | SWhile SyntaxInfo (Expr a) (Expr a)
-    deriving (Show)
+    deriving (Show, Functor, Data)
 
 data Expr a
     = ELit SyntaxInfo a Lit
@@ -48,7 +51,11 @@ data Expr a
     | EClosure SyntaxInfo a [Text] Params TypeAnnot (Expr a)
     | ECall SyntaxInfo a (Expr a) [Expr a]
     | ECast SyntaxInfo Type (Expr a)
-    deriving (Show)
+    | ERecordEmpty SyntaxInfo a
+    | ERecordSelect SyntaxInfo a (Expr a) Text
+    | ERecordRestrict SyntaxInfo a (Expr a) Text
+    | ERecordExtend SyntaxInfo a (Expr a) Text (Expr a)
+    deriving (Show, Functor, Data)
 
 type TypeAnnot = Maybe Type
 type Params = [(Text, TypeAnnot)]
@@ -60,14 +67,14 @@ data Lit
     | LChar Char
     | LBool Bool
     | LUnit
-    deriving (Show)
+    deriving (Show, Data)
 
 data Pattern
     = PVariant Text Pattern
     | PLit Lit
     | PVar Text
     | PWild 
-    deriving (Show)
+    deriving (Show, Data)
 
 type UntypedProgram = Program ()
 type UntypedModule = Module ()
@@ -109,3 +116,7 @@ exprType = \case
     EClosure _ t _ _ _ _ -> t
     ECall _ t _ _ -> t
     ECast _ t _ -> t
+    ERecordEmpty _ t -> t
+    ERecordSelect _ t _ _ -> t
+    ERecordRestrict _ t _ _ -> t
+    ERecordExtend _ t _ _ _ -> t

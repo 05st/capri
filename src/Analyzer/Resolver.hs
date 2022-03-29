@@ -147,6 +147,17 @@ resolveExpr = \case
         typ' <- resolveType info typ
         expr' <- resolveExpr expr
         return (ECast info typ' expr')
+    ERecordEmpty info _ -> return (ERecordEmpty info ())
+    ERecordSelect info _ expr label -> do
+        expr' <- resolveExpr expr
+        return (ERecordSelect info () expr' label)
+    ERecordRestrict info _ expr label -> do
+        expr' <- resolveExpr expr
+        return (ERecordRestrict info () expr' label)
+    ERecordExtend info _ expr1 label expr2 -> do
+        expr1' <- resolveExpr expr1
+        expr2' <- resolveExpr expr2
+        return (ERecordExtend info () expr1' label expr2')
             
 resolveType :: SyntaxInfo -> Type -> Resolve Type
 resolveType info = \case
@@ -160,7 +171,7 @@ resolveType info = \case
             ["i8", "i16", "i32", "i64",
             "u8", "u16", "u32", "u64",
             "f32", "f64",
-            "char", "bool", "unit"]
+            "char", "str", "bool", "unit"]
 
 resolveTypeAnnot :: SyntaxInfo -> TypeAnnot -> Resolve TypeAnnot
 resolveTypeAnnot info annot =
