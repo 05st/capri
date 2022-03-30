@@ -5,7 +5,7 @@
 module Analyzer.Infer where
 
 import Data.Maybe
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, unpack)
 import Data.Data
 import Data.Generics.Uniplate.Data
 import Data.Functor.Identity
@@ -193,7 +193,16 @@ inferExpr = \case
         constrain (Constraint (syntaxInfoSourcePos info) ttype ftype)
         return (EIf info ttype cond' texpr' fexpr')
     
-    EMatch info _ mexpr branches -> undefined
+    EMatch info _ mexpr branches -> do
+        let pos = syntaxInfoSourcePos info
+        mexpr' <- inferExpr mexpr
+        let mtype = exprType mexpr'
+        (consts, pats, bexprs) <- unzip3 <$> traverse inferBranch branches
+        mapM_ (constrain . Constraint pos mtype) (concat consts)
+        let btypes = map exprType bexprs
+        bconst <- fresh
+        mapM_ (constrain . Constraint pos bconst) btypes
+        return (EMatch info bconst mexpr' (zip pats bexprs))
 
     EBinOp info _ oper a b -> do
         a' <- inferExpr a
@@ -297,6 +306,20 @@ inferLit = \case
     LChar _ -> TChar
     LBool _ -> TBool
     LUnit -> TUnit
+
+inferBranch :: (Pattern, UntypedExpr) -> Infer ([Type], Pattern, TypedExpr)
+inferBranch (PWild, expr) = ([], PWild, ) <$> inferExpr expr
+inferBranch (PVar name, expr) = do
+    typ <- fresh
+    expr' <- scoped (M.insert name (Forall [] typ)) (inferExpr expr)
+    return ([typ], PVar name, expr')
+inferBranch (PVariant label vname, expr) = do
+    restRowTyp <- fresh
+    fieldTyp <- fresh
+    let variantType = TVariant (TRowExtend label fieldTyp restRowTyp)
+    expr' <- scoped (M.insert vname (Forall [] fieldTyp)) (inferExpr expr)
+    return ([variantType], PVariant label vname, expr')
+inferBranch (PLit lit, expr) = ([inferLit lit], PLit lit, ) <$> inferExpr expr
 
 constrain :: Constraint -> Infer ()
 constrain const = do
@@ -404,7 +427,7 @@ unifyMany _ _ _ = return M.empty
 rewriteRow :: SourcePos -> Type -> Text -> Type -> Solve Type
 rewriteRow pos row2 label1 ty1 =
     case row2 of
-        TRowEmpty -> throwError (GenericAnalyzerError pos ("Row doesn't contain label '" ++ show label1 ++ "'"))
+        TRowEmpty -> throwError (GenericAnalyzerError pos ("Row doesn't contain label '" ++ unpack label1 ++ "'"))
         TRowExtend label2 ty2 restRow2 | label2 == label1 -> do
             su1 <- unify pos ty1 ty2
             return (apply su1 restRow2)

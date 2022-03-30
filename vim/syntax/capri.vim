@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language: Capri
 " Maintainer: 05st
-" Latest Revision: 9 November 2021
+" Latest Revision: 29 March 2022
 
 if exists("b:current_syntax")
     finish
@@ -63,5 +63,5 @@ syn match Function "\w\(\w\)*("he=e-1,me=e-1
 syn keyword Type i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str bool unit
 
 " Other
-syn match Ignore "<{"
-syn match Ignore "}>"
+syn match Ignore "<"
+syn match Ignore ">"

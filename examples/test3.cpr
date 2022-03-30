@@ -2,4 +2,16 @@ module main;
 
 fn main() {
     let test: <key: char, mouse: i64> = <key = 'C'>;
+
+    match test {
+        key k => k,
+        mouse n => '_',
+        _ => 'L'
+    };
+
+    match 123 {
+        1 => true,
+        2 => true,
+        123 => false
+    }
 };

@@ -297,16 +297,16 @@ pConstType = TConst <$> (userDefined <|> primitive)
 
 -- Patterns
 pPattern :: Parser Pattern
-pPattern = parens pPattern <|> pVariantPattern <|> pWildPattern <|> pVarPattern <|> pLitPattern
+pPattern = parens pPattern <|> try pVariantPattern <|> pWildPattern <|> pVarPattern <|> pLitPattern
 
 pVariantPattern :: Parser Pattern
-pVariantPattern = PVariant <$> identifier <*> pPattern
+pVariantPattern = PVariant <$> identifier <*> (Unqualified <$> identifier) -- No nested patterns for now      <*> pPattern
 
 pWildPattern :: Parser Pattern
 pWildPattern = PWild <$ symbol "_"
 
 pVarPattern :: Parser Pattern
-pVarPattern = PVar <$> identifier
+pVarPattern = PVar . Unqualified <$> identifier
 
 pLitPattern :: Parser Pattern
 pLitPattern = PLit <$> pLiteral

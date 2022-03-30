@@ -4,7 +4,7 @@
 
 module Type where
 
-import Data.Text (Text)
+import Data.Text (Text, unpack)
 import Data.List
 import Data.Data
 import Text.Megaparsec (SourcePos)
@@ -22,12 +22,12 @@ data Type
     | TVariant Row
     | TRowEmpty
     | TRowExtend Text Type Row
-    deriving (Show, Eq, Data)
+    deriving (Eq, Data)
 -- | TRowExtend (LabelMap Type) Row
 
 newtype TVar
     = TV Text
-    deriving (Show, Eq, Ord, Data)
+    deriving (Eq, Ord, Data)
 
 data PolyType
     = Forall [TVar] Type
@@ -61,10 +61,16 @@ pattern TString = TConst (Unqualified "str")
 pattern TBool = TConst (Unqualified "bool")
 pattern TUnit = TConst (Unqualified "unit")
 
-{-
 instance Show Type where
     show (TConst name) = show name
     show (TVar tv) = show tv
     show (TApp a bs) = show a ++ "<" ++ intercalate ", " (map show bs) ++ ">"
     show (TArrow ps rt) = intercalate ", " (map show ps) ++ " -> " ++ show rt
--}
+    show (TRecord row) = "{" ++ show row ++ "}"
+    show (TVariant row) = "<" ++ show row ++ ">"
+    show TRowEmpty = ""
+    show (TRowExtend l t TRowEmpty) = unpack l ++ ": " ++ show t
+    show (TRowExtend l t r) = unpack l ++ ": " ++ show t ++ ", " ++ show r
+
+instance Show TVar where
+    show (TV name) = unpack name

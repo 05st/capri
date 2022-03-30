@@ -1,6 +1,7 @@
 {-# Language OverloadedStrings #-}
 {-# Language LambdaCase #-}
 {-# Language FlexibleContexts #-}
+{-# Language TupleSections #-}
 
 module Analyzer.Resolver where
 
@@ -127,7 +128,8 @@ resolveExpr = \case
         return (EIf info () cond' exprA' exprB')
     EMatch info _ expr branches -> do
         expr' <- resolveExpr expr
-        return (EMatch info () expr' branches)
+        branches' <- traverse runResolveBranch branches
+        return (EMatch info () expr' branches')
     EBinOp info _ name lhs rhs -> do
         lhs' <- resolveExpr lhs
         rhs' <- resolveExpr rhs
@@ -161,6 +163,22 @@ resolveExpr = \case
     EVariant info _ expr label -> do
         expr' <- resolveExpr expr
         return (EVariant info () expr' label)
+
+resolveBranch :: (Pattern, UntypedExpr) -> Resolve (Pattern, UntypedExpr)
+resolveBranch (PWild, expr) = (PWild, ) <$> resolveExpr expr
+resolveBranch (PVar (Unqualified name), expr) = do
+    name' <- insertNameToSet name
+    (PVar name', ) <$> resolveExpr expr
+resolveBranch (PVariant label (Unqualified vname), expr) = do
+    name' <- insertNameToSet vname
+    (PVariant label name', ) <$> resolveExpr expr
+resolveBranch (PLit lit, expr) = do
+    (PLit lit, ) <$> resolveExpr expr
+resolveBranch _ = undefined
+
+runResolveBranch branch = do
+    tscope <- tmpScope
+    local (++ [tscope]) (resolveBranch branch)
             
 resolveType :: SyntaxInfo -> Type -> Resolve Type
 resolveType info = \case

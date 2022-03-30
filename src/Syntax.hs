@@ -73,9 +73,9 @@ data Lit
     deriving (Show, Data)
 
 data Pattern
-    = PVariant Text Pattern
+    = PVariant Text Name
     | PLit Lit
-    | PVar Text
+    | PVar Name
     | PWild 
     deriving (Show, Data)
 
