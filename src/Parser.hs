@@ -188,7 +188,7 @@ pCall = do
         pure (ECall synInfo () expr args))
 
 pValue :: Parser UntypedExpr
-pValue = pClosure <|> pLiteralExpr <|> try pVariable <|> try pRecordRestrict <|> try pRecord <|> pBlock <|> parens pExpression
+pValue = pClosure <|> pLiteralExpr <|> pVariant <|> try pVariable <|> try pRecordRestrict <|> try pRecord <|> pBlock <|> parens pExpression
 
 pClosure :: Parser UntypedExpr
 pClosure = do
@@ -224,6 +224,12 @@ pRecordRestrict = do
     (expr, label) <- braces ((,) <$> pExpression <*> (symbol "-" *> identifier))
     return (ERecordRestrict synInfo () expr label)
 
+pVariant :: Parser UntypedExpr
+pVariant = do
+    synInfo <- pSyntaxInfo
+    (label, expr) <- angles ((,) <$> (identifier <* symbol "=") <*> pExpression)
+    return (EVariant synInfo () expr label)
+
 pBlock :: Parser UntypedExpr
 pBlock = braces (do
     synInfo <- pSyntaxInfo
@@ -256,7 +262,7 @@ pRecordType :: Parser Type
 pRecordType = braces (TRecord <$> pRowType)
 
 pVariantType :: Parser Type
-pVariantType = angles (braces (TVariant <$> pRowType))
+pVariantType = angles (TVariant <$> pRowType)
 
 pRowType :: Parser Type
 pRowType = option TRowEmpty rowExtend

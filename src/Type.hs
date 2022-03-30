@@ -10,6 +10,7 @@ import Data.Data
 import Text.Megaparsec (SourcePos)
 
 import Name
+import LabelMap
 
 type Row = Type
 data Type
@@ -22,6 +23,7 @@ data Type
     | TRowEmpty
     | TRowExtend Text Type Row
     deriving (Show, Eq, Data)
+-- | TRowExtend (LabelMap Type) Row
 
 newtype TVar
     = TV Text

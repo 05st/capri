@@ -10,6 +10,7 @@ import Data.Data
 import SyntaxInfo
 import Type
 import Name
+import LabelMap
 
 type Program a = [Module a]
 
@@ -55,6 +56,8 @@ data Expr a
     | ERecordSelect SyntaxInfo a (Expr a) Text
     | ERecordRestrict SyntaxInfo a (Expr a) Text
     | ERecordExtend SyntaxInfo a (Expr a) Text (Expr a)
+    -- | ERecordExtend SyntaxInfo a (LabelMap (Expr a)) (Expr a)
+    | EVariant SyntaxInfo a (Expr a) Text
     deriving (Show, Functor, Data)
 
 type TypeAnnot = Maybe Type
@@ -120,3 +123,4 @@ exprType = \case
     ERecordSelect _ t _ _ -> t
     ERecordRestrict _ t _ _ -> t
     ERecordExtend _ t _ _ _ -> t
+    EVariant _ t _ _ -> t

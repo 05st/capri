@@ -29,6 +29,7 @@ library
       Analyzer.Infer
       Analyzer.Resolver
       Analyzer.Substitution
+      LabelMap
       Lexer
       Name
       OperatorDef

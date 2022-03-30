@@ -43,7 +43,7 @@ inferProgram prog =
     case runState (runExceptT (preInference prog *> traverse inferModule prog)) initInferState of
         (Left err, _) -> Left err
         (Right prog', state) -> do
-            subst <- runSolve (typeAliasEnv state) (constraints state)
+            subst <- runSolve (constraints state)
             return $ fmap (fmap (apply subst)) prog'
     where
         initInferState = InferState { environment = M.empty, isMutEnv = M.empty, typeAliasEnv = M.empty, preTopLvlEnv = M.empty, freshCount = 0, constraints = [] }
@@ -94,8 +94,7 @@ inferFn pos name params rtann body = do
     body' <- scoped (`M.union` nenv) (inferExpr body)
     let rtype = exprType body'
     consts <- gets constraints
-    typeAliases <- gets typeAliasEnv
-    subst <- liftEither (runSolve typeAliases consts)
+    subst <- liftEither (runSolve consts)
     env <- gets environment
     let typ = apply subst (TArrow ptypes rtype)
         scheme = Forall [] typ -- TODO: generalize env typ for polymorphism
@@ -123,8 +122,7 @@ inferDecl = \case
         expr' <- inferExpr expr
         let etype = exprType expr'
         consts <- gets constraints
-        typeAliases <- gets typeAliasEnv
-        subst <- liftEither (runSolve typeAliases consts)
+        subst <- liftEither (runSolve consts)
         env <- gets environment
         let typ = apply subst etype
             scheme = Forall [] typ -- TODO: generalize (maybe?)
@@ -282,6 +280,15 @@ inferExpr = \case
         constrain (Constraint pos param2Typ rtype)
         return (ERecordExtend info returnTyp expr' label record')
 
+    EVariant info _ expr label -> do
+        restRowTyp <- fresh
+        variantTyp <- fresh
+        let paramTyp = variantTyp
+        let returnTyp = TVariant (TRowExtend label variantTyp restRowTyp)
+        expr' <- inferExpr expr
+        constrain (Constraint (syntaxInfoSourcePos info) paramTyp (exprType expr'))
+        return (EVariant info returnTyp expr' label)
+
 inferLit :: Lit -> Type
 inferLit = \case
     LInt _ -> TInt64
@@ -363,7 +370,7 @@ searchReturns = exprs
         stmtsF x = []
 
 -- Unification
-type Solve = ExceptT AnalyzerError (Reader (M.Map Name Type))
+type Solve = ExceptT AnalyzerError Identity
 
 compose :: Substitution -> Substitution -> Substitution
 compose a b = M.map (apply a) b `M.union` a
@@ -380,9 +387,11 @@ unify pos (TArrow ps r) (TArrow ps2 r2) = unifyMany pos (r : ps) (r2 : ps2)
 unify pos (TRecord row1) (TRecord row2) = unify pos row1 row2
 unify pos (TVariant row1) (TVariant row2) = unify pos row1 row2
 unify pos TRowEmpty TRowEmpty = return M.empty
-unify pos a@(TRowExtend label1 ty1 restRow1) b@(TRowExtend label2 ty2 restRow2)
-    | label1 /= label2 = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
-    | otherwise = unifyMany pos [ty1, restRow1] [ty2, restRow2]
+unify pos a@(TRowExtend label1 ty1 restRow1) b@(TRowExtend label2 ty2 restRow2) = do
+    restRow2 <- rewriteRow pos b label1 ty1
+    unify pos restRow1 restRow2
+-- | label1 /= label2 = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
+-- | otherwise = unifyMany pos [ty1, restRow1] [ty2, restRow2]
 unify pos a b = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
 
 unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution
@@ -391,6 +400,19 @@ unifyMany pos (t1 : ts1) (t2 : ts2) = do
     su2 <- unifyMany pos (apply su1 ts1) (apply su1 ts2)
     return (su2 `compose` su1)
 unifyMany _ _ _ = return M.empty
+
+rewriteRow :: SourcePos -> Type -> Text -> Type -> Solve Type
+rewriteRow pos row2 label1 ty1 =
+    case row2 of
+        TRowEmpty -> throwError (GenericAnalyzerError pos ("Row doesn't contain label '" ++ show label1 ++ "'"))
+        TRowExtend label2 ty2 restRow2 | label2 == label1 -> do
+            su1 <- unify pos ty1 ty2
+            return (apply su1 restRow2)
+        TRowExtend label2 ty2 restRow2 -> do
+            recurse <- rewriteRow pos restRow2 label1 ty1
+            return (TRowExtend label2 ty2 recurse)
+        tv@TVar {} -> return tv
+        _ -> throwError (GenericAnalyzerError pos "Row type expected")
 
 bind :: SourcePos -> TVar -> Type -> Solve Substitution
 bind pos v t
@@ -406,5 +428,5 @@ solve s c =
             let nsub = s1 `compose` s
             solve (s1 `compose` s) (apply s1 cs)
 
-runSolve :: M.Map Name Type -> [Constraint] -> Either AnalyzerError Substitution
-runSolve typeAliases cs = runReader (runExceptT $ solve M.empty cs) typeAliases
+runSolve :: [Constraint] -> Either AnalyzerError Substitution
+runSolve cs = runIdentity (runExceptT $ solve M.empty cs)

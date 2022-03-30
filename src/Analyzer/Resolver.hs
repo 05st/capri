@@ -158,6 +158,9 @@ resolveExpr = \case
         expr1' <- resolveExpr expr1
         expr2' <- resolveExpr expr2
         return (ERecordExtend info () expr1' label expr2')
+    EVariant info _ expr label -> do
+        expr' <- resolveExpr expr
+        return (EVariant info () expr' label)
             
 resolveType :: SyntaxInfo -> Type -> Resolve Type
 resolveType info = \case
