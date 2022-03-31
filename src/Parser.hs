@@ -45,7 +45,7 @@ pModule = do
 pTopLvlDecl :: Parser UntypedTopLvl
 pTopLvlDecl = do
     isPub <- option False (True <$ symbol "pub")
-    pFuncOperDecl isPub <|> pTypeAliasDecl isPub <|> pExternDecl
+    pFuncOperDecl isPub <|> pTypeAliasDecl isPub
 
 pFuncOperDecl :: Bool -> Parser UntypedTopLvl
 pFuncOperDecl isPub = do
@@ -54,7 +54,7 @@ pFuncOperDecl isPub = do
     name <- if isOper then oper <$> pOperatorDef else identifier
     params <- pParams
     retAnnot <- optional pTypeAnnot
-    TLFunc synInfo isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
+    TLFunc synInfo () isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
 
 pOperatorDef :: Parser OperatorDef
 pOperatorDef = do
@@ -73,13 +73,6 @@ pTypeAliasDecl isPub = do
     params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
     symbol "="
     TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
-
-pExternDecl :: Parser UntypedTopLvl
-pExternDecl = do
-    symbol "extern"
-    name <- identifier
-    typs <- parens (sepBy pConstType comma)
-    TLExtern name typs <$> (pTypeAnnot <* semi)
 
 -- Declarations
 pDecl :: Parser UntypedDecl

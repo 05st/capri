@@ -9,6 +9,7 @@ import Parser
 import Analyzer.DependencyCheck
 import Analyzer.Resolver
 import Analyzer.Infer
+import Codegen
 
 main :: IO ()
 main = do
@@ -23,4 +24,4 @@ main = do
                     Left err -> print err
                     Right resolved -> case inferProgram resolved of
                         Left err -> print err
-                        Right typed -> print typed
+                        Right typed -> generate typed

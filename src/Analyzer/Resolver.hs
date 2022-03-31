@@ -19,10 +19,13 @@ import SyntaxInfo
 import Type
 import Name
 
+import Debug.Trace
+
 type Resolve = ExceptT AnalyzerError (ReaderT [Text] (State ResolveState))
 data ResolveState = ResolveState
     { nameSet :: S.Set Name
     , pubMap :: M.Map Name Bool
+    , typeAliasMap :: M.Map Name Type
     , curMod :: Maybe UntypedModule 
     , extraSet :: S.Set Name -- probably not the best way to check for duplicate top levels but works
     , tmpScopeCount :: Int
@@ -35,23 +38,22 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         initResolveState = ResolveState {
             nameSet = initNameSet,
             pubMap = initPubMap,
+            typeAliasMap = M.empty,
             curMod = Nothing,
             extraSet = S.empty,
             tmpScopeCount = 0,
             importsMap = initImportsMap
         }
         initPubMap = M.fromList $ concatMap (\mod -> concatMap (topLvlEntry mod) (modTopLvls mod)) prog
-        topLvlEntry _ TLExtern {} = []
         topLvlEntry mod tl = [(head $ fullNameHelper mod tl, isTopLvlPub tl)]
         initImportsMap = M.fromList $ map (\mod -> (getModFullName mod, modImports mod)) prog
         initNameSet = S.fromList $ concatMap (\mod -> concatMap (fullNameHelper mod) (modTopLvls mod)) prog
         -- ^ contains all of the top level declarations of each module, this is so mutual recursion works
         
-        fullNameHelper mod (TLFunc _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
+        fullNameHelper mod (TLFunc _ _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
         fullNameHelper mod (TLType _ _ (Unqualified name) _ _) = [Qualified (getModFullName mod) name]
-        fullNameHelper _ (TLFunc _ _ _ name _ _ _) = [name]
+        fullNameHelper _ (TLFunc _ _ _ _ name _ _ _) = [name]
         fullNameHelper _ (TLType _ _ name _ _) = [name]
-        fullNameHelper mod TLExtern {} = []
 
 resolveModule :: UntypedModule -> Resolve UntypedModule
 resolveModule mod = do
@@ -62,7 +64,7 @@ resolveModule mod = do
 
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
-    TLFunc info isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
+    TLFunc info () isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
         fullName <- topLvlDefinition info unqual
         typeAnnot' <- resolveTypeAnnot info typeAnnot
 
@@ -71,13 +73,14 @@ resolveTopLvl = \case
             mapM_ insertNameToSet pnames
             pannots' <- traverse (resolveTypeAnnot info) pannots
             expr' <- resolveExpr expr
-            return (TLFunc info isPub isOper fullName (zip pnames pannots') typeAnnot' expr'))
+            return (TLFunc info () isPub isOper fullName (zip pnames pannots') typeAnnot' expr'))
 
     TLType info isPub name@(Unqualified unqual) tvars typ -> do
-        topLvlDefinition info unqual
-        TLType info isPub name tvars <$> resolveType info typ
+        name' <- topLvlDefinition info unqual
+        state <- get
+        put (state { typeAliasMap = M.insert name' typ (typeAliasMap state) })
+        TLType info isPub name' tvars <$> resolveType info typ
 
-    tl@TLExtern {} -> return tl
     _ -> undefined
     where
         topLvlDefinition info unqual = do
@@ -179,11 +182,16 @@ resolveBranch _ = undefined
 runResolveBranch branch = do
     tscope <- tmpScope
     local (++ [tscope]) (resolveBranch branch)
-            
+
 resolveType :: SyntaxInfo -> Type -> Resolve Type
 resolveType info = \case
     typ@(TConst name@(Unqualified unqual)) | unqual `elem` baseTypes -> return typ
-    typ@(TConst name) -> TConst <$> resolveName info name
+    typ@(TConst name) -> do
+        name' <- resolveName info name
+        aliases <- gets typeAliasMap
+        case M.lookup name' aliases of
+            Just parent -> resolveType info parent
+            Nothing -> return (TConst name')
     TApp typ typs -> TApp <$> resolveType info typ <*> traverse (resolveType info) typs
     TArrow typs typ -> TArrow <$> traverse (resolveType info) typs <*> resolveType info typ
     other -> return other

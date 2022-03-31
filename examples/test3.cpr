@@ -1,17 +1,13 @@
 module main;
 
+type Event = <key: char, mouse: i64>;
+
 fn main() {
-    let test: <key: char, mouse: i64> = <key = 'C'>;
+    let test: Event = <key = 'C'>;
 
     match test {
         key k => k,
         mouse n => '_',
         _ => 'L'
     };
-
-    match 123 {
-        1 => true,
-        2 => true,
-        123 => false
-    }
 };

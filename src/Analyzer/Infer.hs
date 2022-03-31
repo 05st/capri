@@ -32,7 +32,6 @@ type Infer = ExceptT AnalyzerError (State InferState)
 data InferState = InferState
     { environment :: Env
     , isMutEnv :: M.Map Name Bool 
-    , typeAliasEnv :: M.Map Name Type
     , preTopLvlEnv :: M.Map Name TVar
     , freshCount :: Int
     , constraints :: [Constraint]
@@ -46,25 +45,18 @@ inferProgram prog =
             subst <- runSolve (constraints state)
             return $ fmap (fmap (apply subst)) prog'
     where
-        initInferState = InferState { environment = M.empty, isMutEnv = M.empty, typeAliasEnv = M.empty, preTopLvlEnv = M.empty, freshCount = 0, constraints = [] }
+        initInferState = InferState { environment = M.empty, isMutEnv = M.empty, preTopLvlEnv = M.empty, freshCount = 0, constraints = [] }
 
 preInference :: UntypedProgram -> Infer ()
 preInference prog = mapM_ initializeTopLvl (concatMap modTopLvls prog)
     where
-        initializeTopLvl (TLFunc _ _ _ name _ _ _) = do
+        initializeTopLvl (TLFunc _ _ _ _ name _ _ _) = do
             env <- gets preTopLvlEnv
             state <- get
             typeVar <- fresh
             let TVar tv = typeVar
             put (state { preTopLvlEnv = M.insert name tv env })
-        initializeTopLvl (TLType info isPub name tvars typ) = do
-            env <- gets typeAliasEnv
-            case M.lookup name env of
-                Just _ -> throwError (RedefinitionError (syntaxInfoSourcePos info) (show name))
-                Nothing -> do
-                    state <- get
-                    put (state { typeAliasEnv = M.insert name typ env })
-        initializeTopLvl TLExtern {} = undefined
+        initializeTopLvl TLType {} = return ()
 
 inferModule :: UntypedModule -> Infer TypedModule
 inferModule (Module info name path imports topLvls) = do
@@ -75,13 +67,12 @@ inferModule (Module info name path imports topLvls) = do
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
-    TLFunc info isPub isOper name params annot body -> do
+    TLFunc info _ isPub isOper name params annot body -> do
         alreadyDefined <- exists name
         when alreadyDefined (throwError (RedefinitionError (syntaxInfoSourcePos info) (show name)))
         (body', typ) <- inferFn (syntaxInfoSourcePos info) name params annot body
-        return (TLFunc info isPub isOper name params annot body')
+        return (TLFunc info typ isPub isOper name params annot body')
     TLType info isPub name typeParams mainTyp -> return (TLType info isPub name typeParams mainTyp)
-    TLExtern name ptypes rtype -> return (TLExtern name ptypes rtype)
 
 inferFn :: SourcePos -> Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)
 inferFn pos name params rtann body = do
