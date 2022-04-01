@@ -5,7 +5,7 @@
 
 module Codegen where
 
-import Data.Text (Text)
+import Data.Text (Text, unpack, pack)
 import qualified Data.Text as T
 import Data.Text.Lazy.Builder
 import qualified Data.Text.Lazy.IO as TIO
@@ -34,8 +34,8 @@ data GenState = GenState
 
 makeLenses ''GenState
 
-capriHeader :: Text
-capriHeader = ""
+capriHeaders :: Builder
+capriHeaders = "#include <stdio.h>\n#include<stdint.h>\n#include<stdbool.h>\n"
 
 generate :: TypedProgram -> IO ()
 generate prog =
@@ -43,7 +43,7 @@ generate prog =
         Left err -> print err
         Right mods -> do
             files <- traverse (const (emptySystemTempFile "capri")) mods
-            sequence_ [TIO.writeFile file (toLazyText builder) | (file, builder) <- zip files mods]
+            sequence_ [TIO.writeFile file (toLazyText (capriHeaders <> builder)) | (file, builder) <- zip files mods]
             print files
     where
         defaultGenState = GenState mempty mempty 0 mempty 0
@@ -61,7 +61,7 @@ genModule mod = do
 genTopLvl :: TypedTopLvl -> Gen ()
 genTopLvl = \case
     TLFunc info (TArrow ptypes rtype) _ isOper name paramsWithAnnots _ body -> do
-        nameBuilder <- if isOper then addOper name else return (convertName name)
+        nameBuilder <- if isOper then handleOper name else return (convertName name)
         let (params, _) = unzip paramsWithAnnots
         let ptypes' = map convertType ptypes
         let rtype' = convertType rtype
@@ -70,16 +70,136 @@ genTopLvl = \case
         let fnDeclBuilder = rtype' <> " " <> nameBuilder <> "(" <> paramsBuilder <> ")"
 
         write (fnDeclBuilder <> " {\n")
-        write "return 0;\n}\n"
-    _ -> write "//\n"
+        flushTo output
+
+        write "return "
+        genExpr body
+
+        write ";\n}\n"
+        flushTo output
+    TLType info _ name typeParams typ -> return ()
+    _ -> throwError "genTopLvl unhandled case"
+
+genDecl :: TypedDecl -> Gen ()
+genDecl = \case
+    DVar info _ name _ expr -> do
+        write $ convertType (exprType expr) <> " " <> convertName name <> " = "
+        genExpr expr
+        write ";\n"
+        flushTo output
+    DStmt s -> genStmt s
+
+genStmt :: TypedStmt -> Gen ()
+genStmt = \case
+    SRet expr -> do
+        write "return "
+        genExpr expr
+        write ";\n"
+        flushTo output
+    SWhile info cond body -> do
+        write "while ("
+        genExpr cond
+        write ") {\n"
+        flushTo output
+        genExpr body
+        write ";\n"
+        write "}\n"
+        flushTo output
+    SExpr expr -> do
+        genExpr expr
+        write ";\n"
+        flushTo output
+
+genExpr :: TypedExpr -> Gen ()
+genExpr = \case
+    ELit _ _ lit -> write (genLit lit)
+    EVar _ _ typs name -> write (convertName name)
+    EAssign _ _ l r -> do
+        genExpr l
+        write " = "
+        genExpr r
+    EBlock _ _ decls res -> do
+        curr <- collectBuffer
+        flushTo output
+        mapM_ genDecl decls
+        flushTo output
+        write curr
+        genExpr res
+    EIf _ t cond a b -> do
+        curr <- collectBuffer
+        var <- tmpVar
+        write (convertType t <> " " <> var <> ";\n")
+        write "if ("
+        genExpr cond
+        write ") {\n"
+        flushTo output
+        write (var <> " = ")
+        genExpr a
+        write ";\n} else {\n"
+        flushTo output
+        write (var <> " = ")
+        genExpr b
+        write ";\n}\n"
+        write (curr <> var)
+    EMatch _ t mexpr branches -> throwError "no match exprs yet"
+    EBinOp _ _ oper a b -> do
+        name <- handleOper oper
+        write "("
+        genExpr a
+        write ", "
+        genExpr b
+        write ")"
+    EUnaOp _ _ oper expr -> do
+        name <- handleOper oper
+        write "("
+        genExpr expr
+        write ")"
+    EClosure {} -> throwError "no closures yet"
+    ECall _ _ fn args -> do
+        genExpr fn
+        write "("
+        sequence_ (intersperse (write ", ") (map genExpr args))
+        write ")"
+    ECast _ targ expr -> do
+        write ("(" <> convertType targ <> ")")
+        genExpr expr
+    ERecordEmpty _ _ -> write "{}"
+    ERecordSelect _ _ record label -> do
+        write "("
+        genExpr record
+        write ")."
+        write (fromText label)
+    r@ERecordExtend {} -> write "{" *> handleRecord r [] *> write "}"
+    _ -> undefined
     where
-        addOper name = do
+        handleRecord (ERecordEmpty _ _) [] = return ()
+        handleRecord (ERecordEmpty _ _) collected = do
+            sequence_ $ intersperse (write ", ") [write ("." <> fromText label <> " = ") *> genExpr expr | (expr, label) <- collected]
+        handleRecord (ERecordExtend _ _ expr label rest) collected = handleRecord rest ((expr, label):collected)
+        handleRecord _ _ = return ()
+
+genLit :: Lit -> Builder
+genLit = \case
+    LInt n -> (fromString . show) n
+    LFloat n -> (fromString . show) n
+    LString s -> (fromString . show . unpack) s
+    LChar c -> (fromString . show) c
+    LBool True -> "true"
+    LBool False -> "false"
+    LUnit -> "0"
+
+handleOper :: Name -> Gen Builder
+handleOper name = do
+    map <- gets _operMap
+    id <- case M.lookup name map of
+        Nothing -> do
             count <- gets _operCount
-            map <- gets _operMap
             operMap .= M.insert name count map
             operCount += 1
-            return ("_op_" <> fromString (show count))
-
+            return count
+        Just id -> return id
+    return ("_op_" <> fromString (show id))
+        
 convertName :: Name -> Builder
 convertName (Unqualified n) = fromText n
 convertName (Qualified ns n) = fromText (T.intercalate "__" (ns ++ [n]))
@@ -102,9 +222,33 @@ convertType = \case
     TUnit -> "unit"
     TConst name -> "_t_" <> convertName name
     TVar (TV x) -> fromText x
-    other -> error (show other)
+    TRecord row -> "struct {" <> convertType row <> "}"
+    TRowEmpty -> ""
+    TRowExtend label fieldType rest -> convertType fieldType <> " " <> fromText label <> ";" <> convertType rest
+    TVariant row -> "struct {" <> convertType row <> "}"
+    _ -> undefined
 
 -- Utility
 write :: Builder -> Gen ()
 write txt = do
-    output <>= txt
+    buffer <>= txt
+
+flushTo :: ASetter GenState GenState Builder Builder -> Gen ()
+flushTo l = do
+    toFlush <- gets _buffer
+    l <>= toFlush
+    buffer .= mempty
+
+collectBuffer :: Gen Builder
+collectBuffer = do
+    buf <- gets _buffer
+    buffer .= mempty
+    return buf
+
+tmpVar :: Gen Builder
+tmpVar = do
+    count <- gets _tmpVarCount
+    tmpVarCount += 1
+    return (fromText . pack $ names !! count)
+    where
+        names = map ('_' :) $ [1..] >>= flip replicateM ['a'..'z']
