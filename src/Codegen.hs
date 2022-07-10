@@ -27,26 +27,29 @@ type Gen = ExceptT Text (State GenState)
 data GenState = GenState
     { _output :: Builder
     , _buffer :: Builder
+    , _typedefs :: Builder
     , _tmpVarCount :: Int
+    , _structMap :: M.Map Type Int
     , _operMap :: M.Map Name Int
     , _operCount :: Int
+    , _structCount :: Int
     }
 
 makeLenses ''GenState
 
 capriHeaders :: Builder
-capriHeaders = "#include <stdio.h>\n#include<stdint.h>\n#include<stdbool.h>\n"
+capriHeaders = "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\n"
 
 generate :: TypedProgram -> IO ()
 generate prog =
     case evalState (runExceptT (genProgram prog)) defaultGenState of
         Left err -> print err
         Right mods -> do
-            files <- traverse (const (emptySystemTempFile "capri")) mods
+            files <- traverse (const (emptySystemTempFile "capri.c")) mods
             sequence_ [TIO.writeFile file (toLazyText (capriHeaders <> builder)) | (file, builder) <- zip files mods]
             print files
     where
-        defaultGenState = GenState mempty mempty 0 mempty 0
+        defaultGenState = GenState mempty mempty mempty 0 mempty mempty 0 0
 
 genProgram :: TypedProgram -> Gen [Builder]
 genProgram = traverse genModule
@@ -55,7 +58,18 @@ genModule :: TypedModule -> Gen Builder
 genModule mod = do
     output .= mempty
     buffer .= mempty
+    typedefs .= mempty
+
+    write "// "
+    write $ mconcat (intersperse "::" (map fromText (modPath mod))) <> "::" <> fromText (modName mod) <> "\n"
+    flushTo output
+
     mapM_ genTopLvl (modTopLvls mod)
+
+    _typedefs' <- gets _typedefs
+    _output' <- gets _output
+    output .= _typedefs' <> _output'
+
     gets _output
 
 genTopLvl :: TypedTopLvl -> Gen ()
@@ -63,8 +77,8 @@ genTopLvl = \case
     TLFunc info (TArrow ptypes rtype) _ isOper name paramsWithAnnots _ body -> do
         nameBuilder <- if isOper then handleOper name else return (convertName name)
         let (params, _) = unzip paramsWithAnnots
-        let ptypes' = map convertType ptypes
-        let rtype' = convertType rtype
+        ptypes' <- traverse convertType ptypes
+        rtype' <- convertType rtype
 
         let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> fromText param | (param, ptype) <- zip params ptypes'])
         let fnDeclBuilder = rtype' <> " " <> nameBuilder <> "(" <> paramsBuilder <> ")"
@@ -83,7 +97,8 @@ genTopLvl = \case
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
     DVar info _ name _ expr -> do
-        write $ convertType (exprType expr) <> " " <> convertName name <> " = "
+        etype <- convertType (exprType expr)
+        write $ etype <> " " <> convertName name <> " = "
         genExpr expr
         write ";\n"
         flushTo output
@@ -128,7 +143,8 @@ genExpr = \case
     EIf _ t cond a b -> do
         curr <- collectBuffer
         var <- tmpVar
-        write (convertType t <> " " <> var <> ";\n")
+        ttype <- convertType t
+        write (ttype <> " " <> var <> ";\n")
         write "if ("
         genExpr cond
         write ") {\n"
@@ -161,7 +177,8 @@ genExpr = \case
         sequence_ (intersperse (write ", ") (map genExpr args))
         write ")"
     ECast _ targ expr -> do
-        write ("(" <> convertType targ <> ")")
+        targtype <- convertType targ
+        write ("(" <> targtype <> ")")
         genExpr expr
     ERecordEmpty _ _ -> write "{}"
     ERecordSelect _ _ record label -> do
@@ -169,14 +186,24 @@ genExpr = \case
         genExpr record
         write ")."
         write (fromText label)
-    r@ERecordExtend {} -> write "{" *> handleRecord r [] *> write "}"
+    r@(ERecordExtend _ _ expr label rest) -> do
+        curr <- collectBuffer
+        rtype <- convertType (exprType r)
+        tvar <- tmpVar
+        typ <- convertType (exprType r)
+        write (typ <> " " <> tvar <> ";\n")
+
+        let exprLabels = handleRecord r []
+        sequence_ [write (tvar <> "." <> fromText label <> " = ") *> genExpr expr *> write ";\n" | (expr, label) <- exprLabels]
+
+        write (curr <> tvar)
     _ -> undefined
     where
-        handleRecord (ERecordEmpty _ _) [] = return ()
-        handleRecord (ERecordEmpty _ _) collected = do
-            sequence_ $ intersperse (write ", ") [write ("." <> fromText label <> " = ") *> genExpr expr | (expr, label) <- collected]
+        handleRecord (ERecordEmpty _ _) [] = []
+        handleRecord (ERecordEmpty _ _) collected = collected
         handleRecord (ERecordExtend _ _ expr label rest) collected = handleRecord rest ((expr, label):collected)
-        handleRecord _ _ = return ()
+        handleRecord (ERecordRestrict _ _ expr label) collected = handleRecord expr collected
+        handleRecord _ collected = collected
 
 genLit :: Lit -> Builder
 genLit = \case
@@ -204,28 +231,44 @@ convertName :: Name -> Builder
 convertName (Unqualified n) = fromText n
 convertName (Qualified ns n) = fromText (T.intercalate "__" (ns ++ [n]))
 
-convertType :: Type -> Builder
+convertType :: Type -> Gen Builder
 convertType = \case
-    TInt8 -> "int8_t"
-    TInt16 -> "int16_t"
-    TInt32 -> "int32_t"
-    TInt64 -> "int64_t"
-    TUInt8 -> "uint8_t"
-    TUInt16 -> "uint16_t"
-    TUInt32 -> "uint32_t"
-    TUInt64 -> "uint64_t"
-    TFloat32 -> "float"
-    TFloat64 -> "double"
-    TString -> "char*"
-    TChar -> "char"
-    TBool -> "bool"
-    TUnit -> "unit"
-    TConst name -> "_t_" <> convertName name
-    TVar (TV x) -> fromText x
-    TRecord row -> "struct {" <> convertType row <> "}"
-    TRowEmpty -> ""
-    TRowExtend label fieldType rest -> convertType fieldType <> " " <> fromText label <> ";" <> convertType rest
-    TVariant row -> "struct {" <> convertType row <> "}"
+    TInt8 -> return "int8_t"
+    TInt16 -> return "int16_t"
+    TInt32 -> return "int32_t"
+    TInt64 -> return "int64_t"
+    TUInt8 -> return "uint8_t"
+    TUInt16 -> return "uint16_t"
+    TUInt32 -> return "uint32_t"
+    TUInt64 -> return "uint64_t"
+    TFloat32 -> return "float"
+    TFloat64 -> return "double"
+    TString -> return "char*"
+    TChar -> return "char"
+    TBool -> return "bool"
+    TUnit -> return "unit"
+    TConst name -> return ("_t_" <> convertName name)
+    TVar (TV x) -> return (fromText x)
+    t@(TRecord row) -> do
+        stmap <- gets _structMap
+        case M.lookup t stmap of
+            Just id -> return ("_struct_" <> fromString (show id))
+            Nothing -> do
+                count <- gets _structCount
+                structMap .= M.insert t count stmap
+                structCount += 1
+
+                let countBldr = fromString (show count)
+                def <- convertType row
+                typedefs <>= "typedef struct {" <> def <> "} _struct_" <> countBldr <> ";\n"
+
+                return ("_struct_" <> fromString (show count))
+    TVariant row -> error "variants not supported yet"
+    TRowEmpty -> return ""
+    TRowExtend label fieldType rest -> do
+        ftype <- convertType fieldType
+        rtype <- convertType rest
+        return (ftype <> " " <> fromText label <> ";" <> rtype)
     _ -> undefined
 
 -- Utility

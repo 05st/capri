@@ -22,7 +22,7 @@ data Type
     | TVariant Row
     | TRowEmpty
     | TRowExtend Text Type Row
-    deriving (Eq, Data)
+    deriving (Eq, Data, Ord)
 -- | TRowExtend (LabelMap Type) Row
 
 newtype TVar

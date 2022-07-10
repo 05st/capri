@@ -1,14 +1,19 @@
 module main;
 
 type Thing = {a: i64, b: bool, c: char};
+type Lmao = {a: i64, b: bool, c: char, d: i64};
 
 fn main(): Thing {
     let mut test: Thing = {a = 1, b = false | {c = 'L'}};
-    let empty = {};
     test.a;
 
     // These two are equivalent
     test.a = 2; 
     test = {a = 2 | {test - a}};
+
+    let mut test2: Lmao = {d = 4 | test};
+
+    {abc = 23};
+
     test
 };
