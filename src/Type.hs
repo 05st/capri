@@ -10,7 +10,6 @@ import Data.Data
 import Text.Megaparsec (SourcePos)
 
 import Name
-import LabelMap
 
 type Row = Type
 data Type

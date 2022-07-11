@@ -13,7 +13,12 @@ fn main(): Thing {
 
     let mut test2: Lmao = {d = 4 | test};
 
+    {x = true | test2};
+
     {abc = 23};
+
+    {ok = () | {}};
+
 
     test
 };

@@ -10,7 +10,6 @@ import Data.Data
 import SyntaxInfo
 import Type
 import Name
-import LabelMap
 
 type Program a = [Module a]
 

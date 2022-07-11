@@ -38,7 +38,10 @@ data GenState = GenState
 makeLenses ''GenState
 
 capriHeaders :: Builder
-capriHeaders = "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\n"
+capriHeaders = "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\ntypedef char unit;\n"
+
+capriEntryPoint :: Builder
+capriEntryPoint = "int main() {\n\tmain__main();\n\treturn 0;\n}\n"
 
 generate :: TypedProgram -> IO ()
 generate prog =
@@ -47,7 +50,11 @@ generate prog =
         Right mods -> do
             files <- traverse (const (emptySystemTempFile "capri.c")) mods
             sequence_ [TIO.writeFile file (toLazyText (capriHeaders <> builder)) | (file, builder) <- zip files mods]
-            print files
+            
+            entryPointFile <- emptySystemTempFile "capri.c"
+            TIO.writeFile entryPointFile (toLazyText capriEntryPoint)
+
+            print (entryPointFile : files)
     where
         defaultGenState = GenState mempty mempty mempty 0 mempty mempty 0 0
 
@@ -199,11 +206,19 @@ genExpr = \case
         write (curr <> tvar)
     _ -> undefined
     where
+        handleRecord var@(EVar info _ _ name) c =
+            case exprType var of
+                TRecord row -> let labels = getRowsLabels row in [(ERecordSelect info TUnit var label, label) | label <- labels] ++ c
+                _ -> error "Attempt to extend non-record (?)"
         handleRecord (ERecordEmpty _ _) [] = []
         handleRecord (ERecordEmpty _ _) collected = collected
         handleRecord (ERecordExtend _ _ expr label rest) collected = handleRecord rest ((expr, label):collected)
         handleRecord (ERecordRestrict _ _ expr label) collected = handleRecord expr collected
         handleRecord _ collected = collected
+
+        getRowsLabels TRowEmpty = []
+        getRowsLabels (TRowExtend label _ next) = label : getRowsLabels next
+        getRowsLabels _ = undefined
 
 genLit :: Lit -> Builder
 genLit = \case
