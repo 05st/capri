@@ -284,6 +284,7 @@ convertType = \case
         ftype <- convertType fieldType
         rtype <- convertType rest
         return (ftype <> " " <> fromText label <> ";" <> rtype)
+    TPtr t -> (<> "*") <$> convertType t
     _ -> undefined
 
 -- Utility

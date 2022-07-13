@@ -30,7 +30,6 @@ library
       Analyzer.Resolver
       Analyzer.Substitution
       Codegen
-      LabelMap
       Lexer
       Name
       OperatorDef

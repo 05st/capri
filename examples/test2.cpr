@@ -2,10 +2,13 @@ module main;
 
 type Thing = {a: i64, b: bool, c: char};
 type Lmao = {a: i64, b: bool, c: char, d: i64};
+type TestType = Thing;
 
 fn main(): Thing {
     let mut test: Thing = {a = 1, b = false | {c = 'L'}};
     test.a;
+
+    let mut thingie: Thing* = (Thing*)1;
 
     // These two are equivalent
     test.a = 2; 
@@ -18,7 +21,6 @@ fn main(): Thing {
     {abc = 23};
 
     {ok = () | {}};
-
 
     test
 };

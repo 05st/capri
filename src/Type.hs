@@ -21,6 +21,7 @@ data Type
     | TVariant Row
     | TRowEmpty
     | TRowExtend Text Type Row
+    | TPtr Type
     deriving (Eq, Data, Ord)
 -- | TRowExtend (LabelMap Type) Row
 
@@ -70,6 +71,7 @@ instance Show Type where
     show TRowEmpty = ""
     show (TRowExtend l t TRowEmpty) = unpack l ++ ": " ++ show t
     show (TRowExtend l t r) = unpack l ++ ": " ++ show t ++ ", " ++ show r
+    show (TPtr t) = show t ++ "*"
 
 instance Show TVar where
     show (TV name) = unpack name

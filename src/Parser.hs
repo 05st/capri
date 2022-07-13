@@ -243,7 +243,7 @@ integer = try octal <|> try binary <|> try hexadecimal <|> signed decimal
 
 -- Types
 pType :: Parser Type
-pType = try pArrowType <|> pRecordType <|> pVariantType <|> pTypeApp <?> "type"
+pType = try pArrowType <|> pRecordType <|> pVariantType <|> pTypePtr <?> "type"
 
 pArrowType :: Parser Type
 pArrowType = do
@@ -267,6 +267,13 @@ pRowType = option TRowEmpty rowExtend
 
             pure (foldr ($) extended rowExtends)
         row = (,) <$> identifier <*> (colon *> pType)
+
+pTypePtr :: Parser Type
+pTypePtr = do
+    typ <- pTypeApp
+    option typ (do
+        symbol "*"
+        pure (TPtr typ))
 
 pTypeApp :: Parser Type
 pTypeApp = do

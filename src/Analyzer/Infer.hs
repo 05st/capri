@@ -406,6 +406,7 @@ unify pos a@(TRowExtend label1 ty1 restRow1) b@(TRowExtend label2 ty2 restRow2) 
     unify pos restRow1 restRow2
 -- | label1 /= label2 = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
 -- | otherwise = unifyMany pos [ty1, restRow1] [ty2, restRow2]
+unify pos (TPtr t1) (TPtr t2) = unify pos t1 t2
 unify pos a b = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
 
 unifyMany :: SourcePos -> [Type] -> [Type] -> Solve Substitution

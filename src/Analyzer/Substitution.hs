@@ -22,6 +22,7 @@ instance Substitutable Type where
     tvs (TVariant row) = tvs row
     tvs TRowEmpty = S.empty
     tvs (TRowExtend _ typ row) = tvs typ `S.union` tvs row
+    tvs (TPtr t) = tvs t
     apply s t@(TConst _) = t
     apply s t@(TVar tv) = M.findWithDefault t tv s
     apply s (TApp t1 ts) = apply s t1 `TApp` apply s ts
@@ -30,6 +31,7 @@ instance Substitutable Type where
     apply s (TVariant row) = TVariant (apply s row)
     apply s TRowEmpty = TRowEmpty
     apply s (TRowExtend l typ row) = TRowExtend l (apply s typ) (apply s row)
+    apply s (TPtr t) = TPtr (apply s t)
 
 instance Substitutable PolyType where
     tvs (Forall vs typ) = tvs typ `S.difference` S.fromList vs

@@ -194,7 +194,8 @@ resolveType info = \case
             Nothing -> return (TConst name')
     TApp typ typs -> TApp <$> resolveType info typ <*> traverse (resolveType info) typs
     TArrow typs typ -> TArrow <$> traverse (resolveType info) typs <*> resolveType info typ
-    other -> return other
+    TPtr typ -> TPtr <$> resolveType info typ
+    other -> return other -- Handle some other types
     where
         baseTypes =
             ["i8", "i16", "i32", "i64",
