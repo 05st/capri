@@ -81,7 +81,7 @@ inferFn pos name params rtann body = do
     sequence_ [when (isJust pann) (constrain $ Constraint pos ptype (fromJust pann)) | (ptype, pann) <- zip ptypes panns]
 
     let ptypesSchemes = map (Forall []) ptypes
-    let nenv = M.fromList (zip (map Unqualified pnames) ptypesSchemes) -- Default mutability is false when variable exists in type env (maybe make explicit?)
+    let nenv = M.fromList (zip pnames ptypesSchemes) -- Default mutability is false when variable exists in type env (maybe make explicit?)
     body' <- scoped (`M.union` nenv) (inferExpr body)
     let rtype = exprType body'
     consts <- gets constraints
@@ -193,6 +193,7 @@ inferExpr = \case
         let btypes = map exprType bexprs
         bconst <- fresh
         mapM_ (constrain . Constraint pos bconst) btypes
+
         return (EMatch info bconst mexpr' (zip pats bexprs))
 
     EBinOp info _ oper a b -> do
@@ -200,33 +201,21 @@ inferExpr = \case
         b' <- inferExpr b
         let at = exprType a'
         let bt = exprType b'
-        case oper of
-            _ | extractName oper `elem` ["+", "-", "*", "/", "%"] -> do -- TODO
-                return (EBinOp info at oper a' b')
-            _ | extractName oper `elem` ["==", "!=", ">", "<", ">=", "<="] -> do
-                return (EBinOp info TBool oper a' b')
-            _ | extractName oper `elem` ["||", "&&"] -> do
-                constrain (Constraint (syntaxInfoSourcePos info) at TBool)
-                constrain (Constraint (syntaxInfoSourcePos info) bt TBool)
-                return (EBinOp info TBool oper a' b')
-            _ -> do
-                optype <- lookupType info oper
-                rt <- fresh
-                let ft = TArrow [at, bt] rt
-                constrain (Constraint (syntaxInfoSourcePos info) optype ft)
-                return (EBinOp info rt oper a' b')
+
+        optype <- lookupType info oper
+        rt <- fresh
+        let ft = TArrow [at, bt] rt
+        constrain (Constraint (syntaxInfoSourcePos info) optype ft)
+        return (EBinOp info rt oper a' b')
 
     EUnaOp info _ oper expr -> do
         a' <- inferExpr expr
         let at = exprType a'
-        case oper of
-            _ | extractName oper == "-" -> do
-                return (EUnaOp info at oper a')
-            _ -> do
-                optype <- lookupType info oper
-                rt <- fresh
-                constrain (Constraint (syntaxInfoSourcePos info) optype (TArrow [at] rt))
-                return (EUnaOp info rt oper a')
+        
+        optype <- lookupType info oper
+        rt <- fresh
+        constrain (Constraint (syntaxInfoSourcePos info) optype (TArrow [at] rt))
+        return (EUnaOp info rt oper a')
 
     EClosure info _ closedVars params rtann body -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) "Closures not implemented yet")
 
@@ -283,10 +272,9 @@ inferExpr = \case
     EVariant info _ expr label -> do
         restRowTyp <- fresh
         variantTyp <- fresh
-        let paramTyp = variantTyp
         let returnTyp = TVariant (TRowExtend label variantTyp restRowTyp)
         expr' <- inferExpr expr
-        constrain (Constraint (syntaxInfoSourcePos info) paramTyp (exprType expr'))
+        constrain (Constraint (syntaxInfoSourcePos info) variantTyp (exprType expr'))
         return (EVariant info returnTyp expr' label)
 
 inferLit :: Lit -> Type
@@ -401,9 +389,10 @@ unify pos (TArrow ps r) (TArrow ps2 r2) = unifyMany pos (r : ps) (r2 : ps2)
 unify pos (TRecord row1) (TRecord row2) = unify pos row1 row2
 unify pos (TVariant row1) (TVariant row2) = unify pos row1 row2
 unify pos TRowEmpty TRowEmpty = return M.empty
-unify pos a@(TRowExtend label1 ty1 restRow1) b@(TRowExtend label2 ty2 restRow2) = do
-    restRow2 <- rewriteRow pos b label1 ty1
-    unify pos restRow1 restRow2
+unify pos a@(TRowExtend label1 ty1 restRow1) b@TRowExtend {} = do
+    (restRow2, sub) <- rewriteRow pos b label1 ty1
+    sub2 <- unify pos restRow1 restRow2
+    return (sub2 `compose` sub)
 -- | label1 /= label2 = throwError (GenericAnalyzerError pos ("Type mismatch " ++ show a ++ " ~ " ++ show b))
 -- | otherwise = unifyMany pos [ty1, restRow1] [ty2, restRow2]
 unify pos (TPtr t1) (TPtr t2) = unify pos t1 t2
@@ -416,17 +405,17 @@ unifyMany pos (t1 : ts1) (t2 : ts2) = do
     return (su2 `compose` su1)
 unifyMany _ _ _ = return M.empty
 
-rewriteRow :: SourcePos -> Type -> Text -> Type -> Solve Type
+rewriteRow :: SourcePos -> Type -> Text -> Type -> Solve (Type, Substitution)
 rewriteRow pos row2 label1 ty1 =
     case row2 of
         TRowEmpty -> throwError (GenericAnalyzerError pos ("Row doesn't contain label '" ++ unpack label1 ++ "'"))
         TRowExtend label2 ty2 restRow2 | label2 == label1 -> do
             su1 <- unify pos ty1 ty2
-            return (apply su1 restRow2)
+            return (apply su1 restRow2, su1)
         TRowExtend label2 ty2 restRow2 -> do
-            recurse <- rewriteRow pos restRow2 label1 ty1
-            return (TRowExtend label2 ty2 recurse)
-        tv@TVar {} -> return tv
+            (recurseTyp, recurseSub) <- rewriteRow pos restRow2 label1 ty1
+            return (TRowExtend label2 ty2 recurseTyp, recurseSub)
+        tv@TVar {} -> return (tv, M.empty)
         _ -> throwError (GenericAnalyzerError pos "Row type expected")
 
 bind :: SourcePos -> TVar -> Type -> Solve Substitution
@@ -441,7 +430,7 @@ solve s c =
         (Constraint pos t1 t2 : cs) -> do
             s1 <- unify pos t1 t2
             let nsub = s1 `compose` s
-            solve (s1 `compose` s) (apply s1 cs)
+            solve nsub (apply nsub cs)
 
 runSolve :: [Constraint] -> Either AnalyzerError Substitution
 runSolve cs = runIdentity (runExceptT $ solve M.empty cs)

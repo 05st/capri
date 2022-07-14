@@ -70,10 +70,10 @@ resolveTopLvl = \case
 
         local (++ [unqual]) (do
             let (pnames, pannots) = unzip params
-            mapM_ insertNameToSet pnames
+            pnames' <- traverse (insertNameToSet . extractName) pnames
             pannots' <- traverse (resolveTypeAnnot info) pannots
             expr' <- resolveExpr expr
-            return (TLFunc info () isPub isOper fullName (zip pnames pannots') typeAnnot' expr'))
+            return (TLFunc info () isPub isOper fullName (zip pnames' pannots') typeAnnot' expr'))
 
     TLType info isPub name@(Unqualified unqual) tvars typ -> do
         name' <- topLvlDefinition info unqual

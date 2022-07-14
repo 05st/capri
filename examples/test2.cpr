@@ -3,12 +3,27 @@ module main;
 type Thing = {a: i64, b: bool, c: char};
 type Lmao = {a: i64, b: bool, c: char, d: i64};
 type TestType = Thing;
+type WhyThisNoWork = {a: i64, b: unit};
+
+type MaybeI64 = <just: i64, none: unit>;
+
+fn another(wyy: bool)
+    ();
+
+fn what(xyz: bool)
+    another(xyz);
 
 fn main(): Thing {
     let mut test: Thing = {a = 1, b = false | {c = 'L'}};
     test.a;
 
-    let mut thingie: Thing* = (Thing*)1;
+    let mut thingie: Thing* = (Thing*)123;
+    let okPlzWork: WhyThisNoWork = {a = 4, b = ()};
+
+    let intExists: MaybeI64 = <just = 123>;
+    match intExists {
+        just x => x
+    };
 
     // These two are equivalent
     test.a = 2; 
@@ -16,11 +31,13 @@ fn main(): Thing {
 
     let mut test2: Lmao = {d = 4 | test};
 
+    {test2 - d};
+
     {x = true | test2};
 
     {abc = 23};
 
-    {ok = () | {}};
+    {ok = what(false) | {}};
 
     test
 };

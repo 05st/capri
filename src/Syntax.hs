@@ -59,7 +59,7 @@ data Expr a
     deriving (Show, Functor, Data)
 
 type TypeAnnot = Maybe Type
-type Params = [(Text, TypeAnnot)]
+type Params = [(Name, TypeAnnot)]
 
 data Lit
     = LInt Integer

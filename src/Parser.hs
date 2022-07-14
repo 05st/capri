@@ -315,8 +315,8 @@ pLitPattern = PLit <$> pLiteral
 pSyntaxInfo :: Parser SyntaxInfo
 pSyntaxInfo = SyntaxInfo <$> getSourcePos
 
-pParams :: Parser [(Text, Maybe Type)]
-pParams = parens (sepBy ((,) <$> identifier <*> optional pTypeAnnot) comma)
+pParams :: Parser [(Name, Maybe Type)]
+pParams = parens (sepBy ((,) . Unqualified <$> identifier <*> optional pTypeAnnot) comma)
 
 pTypeAnnot :: Parser Type
 pTypeAnnot = colon *> pType

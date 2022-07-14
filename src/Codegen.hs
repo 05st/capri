@@ -20,8 +20,13 @@ import Control.Lens
 import System.IO.Temp
 
 import Syntax
+import SyntaxInfo 
 import Name
 import Type
+
+import Text.Megaparsec.Pos (SourcePos, sourcePosPretty)
+
+import Debug.Trace
 
 type Gen = ExceptT Text (State GenState)
 data GenState = GenState
@@ -29,10 +34,10 @@ data GenState = GenState
     , _buffer :: Builder
     , _typedefs :: Builder
     , _tmpVarCount :: Int
-    , _structMap :: M.Map Type Int
+    , _structUnionMap :: M.Map Type Int
     , _operMap :: M.Map Name Int
     , _operCount :: Int
-    , _structCount :: Int
+    , _structUnionCount :: Int
     }
 
 makeLenses ''GenState
@@ -87,7 +92,7 @@ genTopLvl = \case
         ptypes' <- traverse convertType ptypes
         rtype' <- convertType rtype
 
-        let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> fromText param | (param, ptype) <- zip params ptypes'])
+        let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> convertName param | (param, ptype) <- zip params ptypes'])
         let fnDeclBuilder = rtype' <> " " <> nameBuilder <> "(" <> paramsBuilder <> ")"
 
         write (fnDeclBuilder <> " {\n")
@@ -164,7 +169,26 @@ genExpr = \case
         genExpr b
         write ";\n}\n"
         write (curr <> var)
-    EMatch _ t mexpr branches -> throwError "no match exprs yet"
+    EMatch synInfo t mexpr branches -> do
+        curr <- collectBuffer
+        var <- tmpVar
+        rvar <- tmpVar
+        ttype <- convertType t
+        let mexprType = exprType mexpr
+        mexprTypeTxt <- convertType mexprType
+
+        write (ttype <> " " <> rvar <> ";\n")
+        write (mexprTypeTxt <> " " <> var <> " = ")
+        genExpr mexpr
+        write ";\n"
+
+        mapM_ (genMatchBranch rvar var mexprType) branches
+
+        -- Panic for non-exhaustive match expressions
+        write ("{\nprintf(\"%s\", \"PANIC: Non-exhaustive match expression ("
+            <> (fromString . filter (/= '"') . show) (sourcePosPretty (syntaxInfoSourcePos synInfo))
+            <> ")\");\nexit(-1);\n}\n")
+        write (curr <> rvar)
     EBinOp _ _ oper a b -> do
         name <- handleOper oper
         write "("
@@ -204,7 +228,13 @@ genExpr = \case
         sequence_ [write (tvar <> "." <> fromText label <> " = ") *> genExpr expr *> write ";\n" | (expr, label) <- exprLabels]
 
         write (curr <> tvar)
-    _ -> undefined
+    EVariant _ t expr label -> do
+        vtype <- convertType t
+        write ("{." <> fromText label <> " = ")
+        genExpr expr
+        write (", ._type = " <> vtype <> fromText label <> "}")
+    ERecordRestrict _ _ expr _ -> do
+        genExpr expr
     where
         handleRecord var@(EVar info _ _ name) c =
             case exprType var of
@@ -219,6 +249,45 @@ genExpr = \case
         getRowsLabels TRowEmpty = []
         getRowsLabels (TRowExtend label _ next) = label : getRowsLabels next
         getRowsLabels _ = undefined
+
+genMatchBranch :: Builder -> Builder -> Type -> (Pattern, TypedExpr) -> Gen ()
+genMatchBranch rvar var typ (pat, expr) = do
+    case pat of
+        PVariant label name -> do
+            typTxt <- convertType typ
+            write ("if (" <> var <> "._type == " <> typTxt <> fromText label <> ") {\n")
+            
+            labelTypeTxt <- getTypeOfLabel label typ >>= convertType
+            write (labelTypeTxt <> " " <> convertName name <> " = " <> var <> "." <> fromText label <> ";\n")
+
+            write (rvar <> " = ")
+            genExpr expr
+            write ";\n} else "
+        PLit lit -> do
+            write ("if (" <> var <> " == " <> genLit lit <> ") {\n")
+            write (rvar <> " = ")
+            genExpr expr
+            write ";\n} else "
+        PVar name -> do
+            typTxt <- convertType typ
+            write "if (true) {\n"
+
+            write (typTxt <> " " <> convertName name <> " = " <> var <> ";\n")
+
+            write (rvar <> " = ")
+            genExpr expr
+            write ";\n} else "
+        PWild -> do
+            write "if (true) {\n"
+            write (rvar <> " = ")
+            genExpr expr
+            write ";\n} else "
+    where
+        getTypeOfLabel label (TVariant row) = getTypeOfLabel label row
+        getTypeOfLabel label (TRowExtend l typ rest)
+            | l == label = return typ
+            | otherwise = getTypeOfLabel label rest
+        getTypeOfLabel label _ = error $ "getTypeOfLabel reached end (" ++ show label ++ ")"
 
 genLit :: Lit -> Builder
 genLit = \case
@@ -264,21 +333,38 @@ convertType = \case
     TUnit -> return "unit"
     TConst name -> return ("_t_" <> convertName name)
     TVar (TV x) -> return (fromText x)
+    -- TODO: clean up the repeated code here
     t@(TRecord row) -> do
-        stmap <- gets _structMap
+        stmap <- gets _structUnionMap
         case M.lookup t stmap of
-            Just id -> return ("_struct_" <> fromString (show id))
+            Just id -> return ("_record_" <> fromString (show id))
             Nothing -> do
-                count <- gets _structCount
-                structMap .= M.insert t count stmap
-                structCount += 1
+                count <- gets _structUnionCount
+                structUnionMap .= M.insert t count stmap
+                structUnionCount += 1
 
                 let countBldr = fromString (show count)
                 def <- convertType row
-                typedefs <>= "typedef struct {" <> def <> "} _struct_" <> countBldr <> ";\n"
+                typedefs <>= "typedef struct {" <> def <> "} _record_" <> countBldr <> ";\n"
 
-                return ("_struct_" <> fromString (show count))
-    TVariant row -> error "variants not supported yet"
+                return ("_record_" <> countBldr)
+    t@(TVariant row) -> do
+        stmap <- gets _structUnionMap
+        case M.lookup t stmap of
+            Just id -> return ("_variant_" <> fromString (show id))
+            Nothing -> do
+                count <- gets _structUnionCount
+                structUnionMap .= M.insert t count stmap
+                structUnionCount += 1
+
+                let countBldr = fromString (show count)
+                def <- convertType row
+                typedefs <>= "typedef struct {union {" <> def <> "}; int _type;} _variant_" <> countBldr <> ";\n"
+
+                typeIds <- genVariantTypeIds countBldr row 0 []
+                typedefs <>= typeIds
+
+                return ("_variant_" <> countBldr)
     TRowEmpty -> return ""
     TRowExtend label fieldType rest -> do
         ftype <- convertType fieldType
@@ -286,6 +372,11 @@ convertType = \case
         return (ftype <> " " <> fromText label <> ";" <> rtype)
     TPtr t -> (<> "*") <$> convertType t
     _ -> undefined
+    where
+        genVariantTypeIds _ TRowEmpty _ col = return (mconcat col)
+        genVariantTypeIds cnt (TRowExtend label _ rest) id col = do
+            genVariantTypeIds cnt rest (id + 1) (("const int _variant_" <> cnt <> fromText label <> " = " <> fromString (show id) <> ";\n") : col)
+        genVariantTypeIds _ _ _ _ = undefined
 
 -- Utility
 write :: Builder -> Gen ()
