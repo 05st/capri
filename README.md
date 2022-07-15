@@ -23,3 +23,7 @@ Examples can be found [here](https://github.com/05st/capri/tree/master/examples)
 
 ## Documentation, Installation/Usage Instructions
 Language documentation and instructions can be found on the [docs](https://05st.github.io/capri-website/).
+
+---
+
+Go [here](https://github.com/05st/capri-website) if you're looking for the Capri website repository.
