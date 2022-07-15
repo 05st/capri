@@ -20,9 +20,10 @@ fn main(): Thing {
     let mut thingie: Thing* = (Thing*)123;
     let okPlzWork: WhyThisNoWork = {a = 4, b = ()};
 
-    let intExists: MaybeI64 = <just = 123>;
+    let intExists: MaybeI64 = <none = ()>;
     match intExists {
-        just x => x
+        just x => x,
+        none a => 0
     };
 
     // These two are equivalent

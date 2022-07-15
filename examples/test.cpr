@@ -1,5 +1,7 @@
 module main;
 
+import testmod;
+
 op infix 10 + (a, b)
     20;
 
@@ -13,7 +15,7 @@ fn main() {
     let mut n = 0;
     print(tostring(n + 10));
     if false
-        123
+        fromTestMod()
     else
         12
 };

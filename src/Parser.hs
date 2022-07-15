@@ -37,7 +37,8 @@ pModule = do
     Module synInfo name [] imports <$> manyTill pTopLvlDecl eof
     where
         pImport = do
-            isPub <- option False (True <$ symbol "pub")
+            -- isPub <- option False (True <$ symbol "pub")
+            let isPub = False
             symbol "import"
             (isPub,) <$> (sepBy1 identifier (symbol "::") <* semi)
 
