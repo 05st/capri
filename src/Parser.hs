@@ -3,6 +3,8 @@
 
 module Parser (Parser.parse) where
 
+import System.FilePath
+
 import Data.Text (Text, pack, split)
 import Data.Function
 import Data.List
@@ -27,8 +29,8 @@ pModuleOpDefs :: Parser [OperatorDef]
 pModuleOpDefs = concat <$> manyTill (try ((:[]) <$> pOperatorDef) <|> ([] <$ anySingle)) eof
 
 -- Module
-pModule :: Parser UntypedModule
-pModule = do
+pModule :: [Text] -> Parser UntypedModule
+pModule modPath = do
     synInfo <- pSyntaxInfo
     symbol "module"
     name <- identifier
@@ -37,7 +39,7 @@ pModule = do
     externs <- many pExtern
     imports <- many (try pImport)
 
-    Module synInfo name [] imports externs <$> manyTill pTopLvlDecl eof
+    Module synInfo name modPath imports externs <$> manyTill pTopLvlDecl eof
     where
         pImport = do
             isPub <- option False (True <$ symbol "pub")
@@ -330,7 +332,14 @@ pTypeAnnot :: Parser Type
 pTypeAnnot = colon *> pType
 
 -- Run
-parse :: [(String, Text)] -> Either String UntypedProgram
-parse files = do
-    let opdefs = concat (concat (traverse (uncurry (runParser (runReaderT pModuleOpDefs []))) files))
-    left errorBundlePretty (traverse (uncurry (runParser (runReaderT pModule opdefs))) files)
+parse :: FilePath -> [(FilePath, Text)] -> FilePath -> [(FilePath, Text)] -> Either String UntypedProgram
+parse rootDir files stlRootDir stlFiles = do
+    let opdefs = concat (concat (traverse (uncurry (runParser (runReaderT pModuleOpDefs []))) (stlFiles ++ files)))
+
+    let (filePaths, contents) = unzip files
+    let parseFiles = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath rootDir filePath)) opdefs) filePath content) files
+    let parseStl = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath stlRootDir filePath)) opdefs) filePath content) stlFiles
+
+    left errorBundlePretty (sequence (parseStl ++ parseFiles))
+    where
+        getModPath dir path = map pack ((init . (\fp -> splitDirectories fp \\ splitDirectories dir)) path)

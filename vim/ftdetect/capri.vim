@@ -1,1 +1,1 @@
-au BufRead,BufNewFile *.cpr set filetype=capri
+au BufRead,BufNewFile *.capri set filetype=capri

@@ -1,3 +1,5 @@
+{-# LANGUAGE TupleSections #-}
+
 module Main where
 
 import System.Environment
@@ -39,26 +41,30 @@ main = runOpts =<< execParser (options `withInfo` infoString)
         withInfo opts desc = info (helper <*> opts) $ progDesc desc
         infoString = "Capri Compiler"
 
-readDir :: FilePath -> IO [(String, T.Text)]
+readDir :: FilePath -> IO [(FilePath, T.Text)]
 readDir path = do
     filePaths <- map (path ++) <$> listDirectory path
-    case filter ((== ".cpr") . takeExtension) filePaths of
-        [] -> [] <$ putStrLn "No .cpr files found"
-        cprFilePaths -> traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
+    readInputs <-
+        case filter ((== ".capri") . takeExtension) filePaths of
+            [] -> [] <$ putStrLn ("No .capri files found under " ++ path)
+            cprFilePaths -> traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
+    readInputsFromChildDirs <- concat <$> (do
+        childDirs <- filterM doesDirectoryExist filePaths
+        traverse (readDir . (++ ['/'])) childDirs)
+    return (readInputs ++ readInputsFromChildDirs)
 
 runOpts :: Options -> IO ()
 runOpts (Options srcDir outPath cc stlDir noStl) = do
     readInputs <- readDir srcDir
-    stlDirInputs <-
-        if noStl then return [] else
+    (stlDir', stlDirInputs) <-
+        if noStl then return ("", []) else
             case stlDir of
-                Just path -> readDir path
+                Just path -> (path,) <$> readDir path
                 Nothing -> do
                     pathFromEnv <- getEnv "CAPRI_STL"
-                    readDir pathFromEnv
-    let inputs = stlDirInputs ++ readInputs
+                    (pathFromEnv,) <$> readDir pathFromEnv
 
-    case (parse inputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . inferProgram of
+    case (parse srcDir readInputs stlDir' stlDirInputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . inferProgram of
         Left err -> putStrLn err
         Right typed -> do
             genFiles <- generate typed
