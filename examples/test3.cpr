@@ -1,0 +1,13 @@
+module main;
+
+type Event = <key: char, mouse: i64>;
+
+fn main() {
+    let test: Event = <key = 'C'>;
+
+    match test {
+        key k => k,
+        mouse n => '_',
+        _ => 'L'
+    };
+};

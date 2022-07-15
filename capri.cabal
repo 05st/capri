@@ -24,15 +24,18 @@ source-repository head
 
 library
   exposed-modules:
-      Analyzer
+      Analyzer.AnalyzerError
+      Analyzer.DependencyCheck
+      Analyzer.Infer
+      Analyzer.Resolver
+      Analyzer.Substitution
       Codegen
       Lexer
       Name
       OperatorDef
       Parser
-      Resolver
-      Substitution
       Syntax
+      SyntaxInfo
       Type
   other-modules:
       Paths_capri

@@ -1,0 +1,21 @@
+module main;
+
+import testmod;
+
+op infix 10 + (a, b)
+    20;
+
+fn print(a: str)
+    ();
+
+fn tostring(a: i64): str
+    "abc";
+
+fn main() {
+    let mut n = 0;
+    print(tostring(n + 10));
+    if false
+        fromTestMod()
+    else
+        12
+};

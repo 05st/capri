@@ -1,0 +1,5 @@
+module testmod;
+
+pub fn fromTestMod() {
+    123
+};

@@ -1,8 +1,5 @@
-{-# Language PatternSynonyms #-}
-{-# Language DeriveFunctor #-}
-{-# Language OverloadedStrings #-}
 {-# Language LambdaCase #-}
-{-# Language TupleSections #-}
+{-# Language DeriveFunctor #-}
 {-# Language DeriveDataTypeable #-}
 
 module Syntax where
@@ -10,65 +7,59 @@ module Syntax where
 import Data.Text (Text)
 import Data.Data
 
-import Text.Megaparsec.Pos
-
-import OperatorDef
+import SyntaxInfo
 import Type
 import Name
 
 type Program a = [Module a]
 
-type Import = [Text]
+type Import = (Bool, [Text])
 data Module a = Module
-    { modSourcePos :: SourcePos
-    , modFullName :: [Text]
+    { modSynInfo :: SyntaxInfo
+    , modName :: Text
+    , modPath :: [Text]
     , modImports :: [Import]
     , modTopLvls :: [TopLvl a]
-    , modPubs :: [Text]
     } deriving (Show, Functor)
 
-type TypeAnnot = Maybe Type
-type Params = [(Text, TypeAnnot)]
 data TopLvl a
-    = TLFunc a SourcePos Name Params TypeAnnot (Expr a)
-    | TLOper a SourcePos Name Params TypeAnnot (Expr a)
-    | TLExtern Text [Type] Type
-    | TLType SourcePos Name [TVar] [(Name, [Type])]
-    | TLStruct SourcePos Name [TVar] [(Text, Type)]
+    = TLFunc SyntaxInfo a Bool Bool Name Params TypeAnnot (Expr a)
+    | TLType SyntaxInfo Bool Name [TVar] Type
     deriving (Show, Functor)
-
+    
 data Decl a
-    = DVar a SourcePos Bool Text TypeAnnot (Expr a)
-    | DStmt (Stmt a)
-    deriving (Show, Functor, Data, Typeable)
+    = DStmt (Stmt a)
+    | DVar SyntaxInfo Bool Name TypeAnnot (Expr a)
+    deriving (Show, Functor, Data)
 
 data Stmt a
     = SExpr (Expr a)
     | SRet (Expr a)
-    | SWhile SourcePos (Expr a) (Expr a)
-    deriving (Show, Functor, Data, Typeable)
+    | SWhile SyntaxInfo (Expr a) (Expr a)
+    deriving (Show, Functor, Data)
 
 data Expr a
-    = ELit a SourcePos Lit
-    | EVar a SourcePos [a] Name
-    | EAssign a SourcePos (Expr a) (Expr a)
-    | EBlock a SourcePos [Decl a] (Expr a)
-    | EIf a SourcePos (Expr a) (Expr a) (Expr a)
-    | EMatch a SourcePos (Expr a) [(Pattern, Expr a)]
-    | EBinOp a SourcePos Name (Expr a) (Expr a)
-    | EUnaOp a SourcePos Name (Expr a)
-    | EClosure a SourcePos [Text] Params TypeAnnot (Expr a)
-    | ECall a SourcePos (Expr a) [Expr a]
-    | ECast a SourcePos Type (Expr a)
-    | EDeref a SourcePos (Expr a)
-    | ERef a SourcePos (Expr a)
-    | EArrow a SourcePos (Expr a) Text
-    | ESizeof a SourcePos (Either Type (Expr a))
-    | EArray a SourcePos [Expr a]
-    | EIndex a SourcePos (Expr a) Int
-    | EStruct a SourcePos Name [(Text, Expr a)]
-    | EAccess a SourcePos (Expr a) Text
-    deriving (Show, Functor, Data, Typeable)
+    = ELit SyntaxInfo a Lit
+    | EVar SyntaxInfo a [Type] Name
+    | EAssign SyntaxInfo a (Expr a) (Expr a)
+    | EBlock SyntaxInfo a [Decl a] (Expr a)
+    | EIf SyntaxInfo a (Expr a) (Expr a) (Expr a)
+    | EMatch SyntaxInfo a (Expr a) [(Pattern, Expr a)]
+    | EBinOp SyntaxInfo a Name (Expr a) (Expr a)
+    | EUnaOp SyntaxInfo a Name (Expr a)
+    | EClosure SyntaxInfo a [Text] Params TypeAnnot (Expr a)
+    | ECall SyntaxInfo a (Expr a) [Expr a]
+    | ECast SyntaxInfo Type (Expr a)
+    | ERecordEmpty SyntaxInfo a
+    | ERecordSelect SyntaxInfo a (Expr a) Text
+    | ERecordRestrict SyntaxInfo a (Expr a) Text
+    | ERecordExtend SyntaxInfo a (Expr a) Text (Expr a)
+    -- | ERecordExtend SyntaxInfo a (LabelMap (Expr a)) (Expr a)
+    | EVariant SyntaxInfo a (Expr a) Text
+    deriving (Show, Functor, Data)
+
+type TypeAnnot = Maybe Type
+type Params = [(Name, TypeAnnot)]
 
 data Lit
     = LInt Integer
@@ -77,46 +68,55 @@ data Lit
     | LChar Char
     | LBool Bool
     | LUnit
-    deriving (Show, Data, Typeable)
+    deriving (Show, Data)
 
 data Pattern
-    = PCon Name [Text]
+    = PVariant Text Name
     | PLit Lit
-    | PVar Text
-    | PWild
-    deriving (Show, Data, Typeable)
+    | PVar Name
+    | PWild 
+    deriving (Show, Data)
 
 type UntypedProgram = Program ()
-type TypedProgram = Program Type
 type UntypedModule = Module ()
-type TypedModule = Module Type
 type UntypedTopLvl = TopLvl ()
-type TypedTopLvl = TopLvl Type
 type UntypedDecl = Decl ()
-type TypedDecl = Decl Type
 type UntypedStmt = Stmt ()
-type TypedStmt = Stmt Type
 type UntypedExpr = Expr ()
+
+type TypedProgram = Program Type
+type TypedModule = Module Type
+type TypedTopLvl = TopLvl Type
+type TypedDecl = Decl Type
+type TypedStmt = Stmt Type
 type TypedExpr = Expr Type
 
-typeOfExpr :: TypedExpr -> Type
-typeOfExpr = \case
-    ELit t _ _ -> t
-    EVar t _ _ _ -> t
-    EAssign t _ _ _ -> t
-    EBlock t _ _ _ -> t
-    EIf t _ _ _ _ -> t
-    EMatch t _ _ _ -> t
-    EBinOp t _ _ _ _ -> t
-    EUnaOp t _ _ _ -> t
-    EClosure t _ _ _ _ _ -> t
-    ECall t _ _ _ -> t
-    ECast t _ _ _ -> t
-    EDeref t _ _ -> t
-    ERef t _ _ -> t
-    ESizeof t _ _ -> t
-    EArray t _ _ -> t
-    EIndex t _ _ _ -> t
-    EStruct t _ _ _ -> t
-    EAccess t _ _ _ -> t
-    EArrow t _ _ _ -> t
+getModFullName :: Module a -> [Text]
+getModFullName mod = modPath mod ++ [modName mod]
+
+topLvlToName :: TopLvl a -> Name
+topLvlToName (TLFunc _ _ _ _ name _ _ _) = name
+topLvlToName (TLType _ _ name _ _) = name
+
+isTopLvlPub :: TopLvl a -> Bool
+isTopLvlPub (TLFunc _ _ isPub _ _ _ _ _) = isPub
+isTopLvlPub (TLType _ isPub _ _ _) = isPub
+
+exprType :: TypedExpr -> Type
+exprType = \case
+    ELit _ t _ -> t
+    EVar _ t _ _ -> t
+    EAssign _ t _ _ -> t
+    EBlock _ t _ _ -> t
+    EIf _ t _ _ _ -> t
+    EMatch _ t _ _ -> t
+    EBinOp _ t _ _ _ -> t
+    EUnaOp _ t _ _ -> t
+    EClosure _ t _ _ _ _ -> t
+    ECall _ t _ _ -> t
+    ECast _ t _ -> t
+    ERecordEmpty _ t -> t
+    ERecordSelect _ t _ _ -> t
+    ERecordRestrict _ t _ _ -> t
+    ERecordExtend _ t _ _ _ -> t
+    EVariant _ t _ _ -> t

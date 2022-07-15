@@ -1,427 +1,329 @@
 {-# Language OverloadedStrings #-}
-{-# Language LambdaCase #-}
 {-# Language TupleSections #-}
 
 module Parser (Parser.parse) where
 
-import Data.Text (Text, pack, singleton)
-import Data.Void
-import Data.List
+import Data.Text (Text, pack, split)
 import Data.Function
-import Data.Functor.Identity
+import Data.List
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
 
+import Control.Arrow
 import Control.Monad.Combinators.Expr
-import qualified Control.Monad.State as S
+import Control.Monad.Reader
 
 import Lexer
 import Syntax
 import Type
-import OperatorDef
 import Name
+import OperatorDef
+import SyntaxInfo
+import Debug.Trace (trace)
 
--- Parse operator defs
-parseModuleOpDefs :: Parser ()
-parseModuleOpDefs = do
-    manyTill (try parseModuleOpDef <|> (() <$ anySingle)) eof
-    return ()
-    where
-        parseModuleOpDef = do
-            reserved "op"
-            assocParsed <- opAssoc
-            precedence <- decimal
-            oper <- operator
-
-            let opdef = OperatorDef assocParsed precedence oper
-            (opdefs, pubs) <- S.get
-            S.put (opdef : opdefs, pubs)
-
-opAssoc :: Parser Assoc
-opAssoc = (ALeft <$ reserved "infixl") <|> (ARight <$ reserved "infixr") <|> (ANone <$ reserved "infix")
-    <|> (APrefix <$ reserved "prefix") <|> (APostfix <$ reserved "postfix")
+-- Operator defs (pre)
+pModuleOpDefs :: Parser [OperatorDef]
+pModuleOpDefs = concat <$> manyTill (try ((:[]) <$> pOperatorDef) <|> ([] <$ anySingle)) eof
 
 -- Module
-parseModule :: Parser UntypedModule
-parseModule = do
-    (opdefs, _) <- S.get
-    S.put (opdefs, [])
-
-    sc
-    pos <- getSourcePos
-    name <- reserved "module" *> identifier <* semi
-    imports <- many (reserved "import" *> parseImport <* semi)
-    decls <- manyTill topLvlDecl eof
-
-    pubs <- S.gets snd
-    return (Module pos [name] imports decls pubs)
+pModule :: Parser UntypedModule
+pModule = do
+    synInfo <- pSyntaxInfo
+    symbol "module"
+    name <- identifier
+    semi
+    imports <- many pImport
+    Module synInfo name [] imports <$> manyTill pTopLvlDecl eof
     where
-        parseImport = sepBy1 identifier (reservedOp "::")
+        pImport = do
+            -- isPub <- option False (True <$ symbol "pub")
+            let isPub = False
+            symbol "import"
+            (isPub,) <$> (sepBy1 identifier (symbol "::") <* semi)
 
 -- Top Level Declarations
-topLvlDecl :: Parser UntypedTopLvl
-topLvlDecl = maybePubTopLvlDecl <|> topLvlExternDecl
+pTopLvlDecl :: Parser UntypedTopLvl
+pTopLvlDecl = do
+    isPub <- option False (True <$ symbol "pub")
+    pFuncOperDecl isPub <|> pTypeAliasDecl isPub
+
+pFuncOperDecl :: Bool -> Parser UntypedTopLvl
+pFuncOperDecl isPub = do
+    synInfo <- pSyntaxInfo
+    isOper <- (True <$ symbol "op") <|> (False <$ symbol "fn")
+    name <- if isOper then oper <$> pOperatorDef else identifier
+    params <- pParams
+    retAnnot <- optional pTypeAnnot
+    TLFunc synInfo () isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
+
+pOperatorDef :: Parser OperatorDef
+pOperatorDef = do
+    assoc <- pAssoc
+    prec <- decimal
+    OperatorDef assoc prec <$> operator
     where
-        maybePubTopLvlDecl = do
-            isPub <- option False (True <$ reserved "pub")
-            choice (map ($ isPub) [topLvlFuncDecl, topLvlOperDecl, topLvlTypeDecl, topLvlStructDecl])
+        pAssoc = (ALeft <$ symbol "infixl") <|> (ARight <$ symbol "infixr") <|> (ANone <$ symbol "infix")
+            <|> (APrefix <$ symbol "prefix") <|> (APostfix <$ symbol "postfix")
 
-topLvlFuncDecl :: Bool -> Parser UntypedTopLvl
-topLvlFuncDecl isPub = do
-    pos <- getSourcePos
-    reserved "fn"
-    name <- identifier
-    paramsParsed <- params
-    retAnnot <- optional typeAnnot
-    expr <- expression
-    semi
-    S.when isPub (addPub name)
-    return $ TLFunc () pos (Unqualified name) paramsParsed retAnnot expr
-
-topLvlOperDecl :: Bool -> Parser UntypedTopLvl
-topLvlOperDecl isPub = do
-    pos <- getSourcePos
-    reserved "op"
-    opAssoc
-    decimal
-    oper <- operator
-    paramsParsed <- params
-    retAnnot <- optional typeAnnot
-
-    expr <- expression
-    semi
-
-    S.when isPub (addPub oper)
-    return $ TLOper () pos (Unqualified oper) paramsParsed retAnnot expr
-
-topLvlTypeDecl :: Bool -> Parser UntypedTopLvl
-topLvlTypeDecl isPub = do
-    pos <- getSourcePos
-    reserved "type"
-    typeName <- typeIdentifier
-    typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
-    reservedOp "="
-    valueCons <- sepBy1 valueCon (symbol "|")
-    semi
-
-    S.when isPub (mapM_ (addPub . extractName . fst) valueCons *> addPub typeName)
-    return (TLType pos (Unqualified typeName) typeParams valueCons)
-    where
-        valueCon = do
-            conName <- typeIdentifier
-            types <- parens (sepBy type' comma)
-            return (Unqualified conName, types)
-
-topLvlStructDecl :: Bool -> Parser UntypedTopLvl
-topLvlStructDecl isPub = do
-    pos <- getSourcePos
-    reserved "struct"
-    structName <- typeIdentifier
-    typeParams <- option [] (angles (sepBy (TV <$> identifier) comma))
-    fields <- braces (sepBy1 field comma)
-    semi
-
-    S.when isPub (addPub structName)
-    return (TLStruct pos (Unqualified structName) typeParams fields)
-    where
-        field = (,) <$> identifier <*> typeAnnot
-
-topLvlExternDecl :: Parser UntypedTopLvl
-topLvlExternDecl = do
-    reserved "extern"
-    fn <- identifier
-    paramTypes <- parens (sepBy type' comma)
-    retType <- typeAnnot
-    semi
-    return (TLExtern fn paramTypes retType)
-
-addPub :: Text -> Parser ()
-addPub name = do
-    (opdefs, pubs) <- S.get
-    S.put (opdefs, name : pubs)
+pTypeAliasDecl :: Bool -> Parser UntypedTopLvl
+pTypeAliasDecl isPub = do
+    synInfo <- pSyntaxInfo
+    symbol "type"
+    name <- typeIdentifier
+    params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
+    symbol "="
+    TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
 
 -- Declarations
-declaration :: Parser UntypedDecl
-declaration = try varDecl <|> (DStmt <$> statement)
+pDecl :: Parser UntypedDecl
+pDecl = pVarDecl <|> (DStmt <$> pStmt)
 
-varDecl :: Parser UntypedDecl
-varDecl = do
-    pos <- getSourcePos 
-    isMut <- option False (True <$ reserved "mut")
+pVarDecl :: Parser UntypedDecl
+pVarDecl = do
+    synInfo <- pSyntaxInfo
+    symbol "let"
+    isMut <- option False (True <$ symbol "mut")
     name <- identifier
-    annot <- optional (try typeAnnot)
-    reservedOp ":="
-    DVar () pos isMut name annot <$> (expression <* semi)
+    annot <- optional pTypeAnnot
+    symbol "="
+    DVar synInfo isMut (Unqualified name) annot <$> (pExpression <* semi)
 
 -- Statements
-statement :: Parser UntypedStmt
-statement = retStmt <|> whileStmt <|> (SExpr <$> (expression <* semi))
+pStmt :: Parser UntypedStmt
+pStmt = pRetStmt <|> pWhileStmt <|> (SExpr <$> (pExpression <* semi))
 
-retStmt :: Parser UntypedStmt
-retStmt = do
-    reserved "return"
-    SRet <$> (expression <* semi)
+pRetStmt :: Parser UntypedStmt
+pRetStmt = do
+    symbol "return"
+    SRet <$> (pExpression <* semi)
 
-whileStmt :: Parser UntypedStmt
-whileStmt = do
-    pos <- getSourcePos
-    reserved "while"
-    cond <- expression
-    body <- expression
-    semi
-    return (SWhile pos cond body)
+pWhileStmt :: Parser UntypedStmt
+pWhileStmt = do
+    synInfo <- pSyntaxInfo
+    symbol "while"
+    cond <- pExpression
+    SWhile synInfo cond <$> (pExpression <* semi)
 
 -- Expressions
-expression :: Parser UntypedExpr
-expression = do
-    opers <- S.gets fst
-    pos <- getSourcePos
-    let table = mkTable pos opers
-    makeExprParser term table
+pExpression :: Parser UntypedExpr
+pExpression = do
+    opers <- ask
+    synInfo <- pSyntaxInfo
+
+    let table = mkTable synInfo opers
+    makeExprParser pTerm table
     where
-        mkTable pos = map (map (toParser pos)) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
-        toParser pos (OperatorDef assoc _ oper) = case assoc of
-            ANone -> infixOp oper (EBinOp () pos . Unqualified $ oper)
-            ALeft -> infixlOp oper (EBinOp () pos . Unqualified $ oper)
-            ARight -> infixrOp oper (EBinOp () pos . Unqualified $ oper)
-            APrefix -> prefixOp oper (EUnaOp () pos . Unqualified $ oper)
-            APostfix -> postfixOp oper (EUnaOp () pos . Unqualified $ oper)
-        infixOp name f = InfixN (reservedOp name >> return f)
-        infixlOp name f = InfixL (reservedOp name >> return f)
-        infixrOp name f = InfixR (reservedOp name >> return f)
-        prefixOp name f = Prefix (reservedOp name >> return f)
-        postfixOp name f = Postfix (reservedOp name >> return f)
+        mkTable synInfo = map (map (toParser synInfo)) . groupBy ((==) `on` prec) . sortBy (flip compare `on` prec)
+        toParser synInfo (OperatorDef assoc _ oper) = case assoc of
+            ANone -> infixOp oper (EBinOp synInfo () . Unqualified $ oper)
+            ALeft -> infixlOp oper (EBinOp synInfo () . Unqualified $ oper)
+            ARight -> infixrOp oper (EBinOp synInfo () . Unqualified $ oper)
+            APrefix -> prefixOp oper (EUnaOp synInfo () . Unqualified $ oper)
+            APostfix -> postfixOp oper (EUnaOp synInfo () . Unqualified $ oper)
+        infixOp name f = InfixN (f <$ symbol name)
+        infixlOp name f = InfixL (f <$ symbol name)
+        infixrOp name f = InfixR (f <$ symbol name)
+        prefixOp name f = Prefix (f <$ symbol name)
+        postfixOp name f = Postfix (f <$ symbol name)
 
-term :: Parser UntypedExpr
-term = ifExpr <|> matchExpr <|> try closure <|> try assign <|> try access <|> try index <|> try cast <|> try arrowIndex <|> deref <|> ref <|> value
+pTerm :: Parser UntypedExpr
+pTerm = pIfExpr <|> pMatchExpr <|> try pCast <|> pAssign
 
-ifExpr :: Parser UntypedExpr
-ifExpr = do
-    pos <- getSourcePos
-    reserved "if"
-    cond <- expression
-    trueBody <- expression
-    pos2 <- getSourcePos
-    falseBody <- option (ELit () pos2 LUnit) (reserved "else" *> expression)
-    return $ EIf () pos cond trueBody falseBody
+pIfExpr :: Parser UntypedExpr
+pIfExpr = do
+    synInfo <- pSyntaxInfo
+    symbol "if"
+    cond <- pExpression
+    onTrue <- pExpression
+    onFalse <- option (ELit synInfo () LUnit) (symbol "else" *> pExpression)
+    pure (EIf synInfo () cond onTrue onFalse)
 
-matchExpr :: Parser UntypedExpr
-matchExpr = do
-    pos <- getSourcePos
-    reserved "match"
-    mexpr <- expression
-    EMatch () pos mexpr <$> braces (sepBy1 matchBranch comma)
+pMatchExpr :: Parser UntypedExpr
+pMatchExpr = do
+    synInfo <- pSyntaxInfo
+    symbol "match"
+    mexpr <- pExpression
+    EMatch synInfo () mexpr <$> braces (sepBy1 pMatchBranch comma)
     where
-        matchBranch = do
-            pat <- pattern
-            reservedOp "=>"
-            (pat,) <$> expression
+        pMatchBranch = do
+            pat <- pPattern
+            symbol "=>"
+            (pat,) <$> pExpression
 
-closure :: Parser UntypedExpr
-closure = do
-    pos <- getSourcePos
+pCast :: Parser UntypedExpr
+pCast = do
+    synInfo <- pSyntaxInfo
+    target <- parens pType
+    ECast synInfo target <$> pCall
+
+pAssign :: Parser UntypedExpr
+pAssign = do
+    synInfo <- pSyntaxInfo
+    lhs <- pRecordSelect
+    option lhs (do
+        symbol "="
+        EAssign synInfo () lhs <$> pExpression)
+
+pRecordSelect :: Parser UntypedExpr
+pRecordSelect = do
+    expr <- pCall
+    synInfo <- pSyntaxInfo
+    option expr (do
+        dot
+        ERecordSelect synInfo () expr <$> identifier)
+
+pCall :: Parser UntypedExpr
+pCall = do
+    synInfo <- pSyntaxInfo
+    expr <- pValue
+    option expr (do
+        args <- parens (sepBy pExpression comma)
+        pure (ECall synInfo () expr args))
+
+pValue :: Parser UntypedExpr
+pValue = pClosure <|> pLiteralExpr <|> pVariant <|> try pVariable <|> try pRecordRestrict <|> try pRecord <|> pBlock <|> parens pExpression
+
+pClosure :: Parser UntypedExpr
+pClosure = do
+    synInfo <- pSyntaxInfo
     closedVars <- brackets (sepBy identifier comma)
-    paramsParsed <- params
-    retAnnot <- optional typeAnnot
-    EClosure () pos closedVars paramsParsed retAnnot <$> expression
+    paramsParsed <- pParams
+    retAnnot <- optional pTypeAnnot
+    EClosure synInfo () closedVars paramsParsed retAnnot <$> pExpression
 
-assign :: Parser UntypedExpr
-assign = do
-    pos <- getSourcePos
-    val <- deref <|> try arrowIndex <|> try index <|> try access <|> value 
-    try (regularAssign pos val) <|> operatorAssign pos val
+pLiteralExpr :: Parser UntypedExpr
+pLiteralExpr = do
+    synInfo <- pSyntaxInfo
+    ELit synInfo () <$> pLiteral
+
+pVariable :: Parser UntypedExpr
+pVariable = do
+    synInfo <- pSyntaxInfo
+    EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
+
+pRecord :: Parser UntypedExpr
+pRecord = do
+    synInfo <- pSyntaxInfo
+    (items, extends) <- braces ((,) <$> sepBy recordItem comma <*> recordExtend synInfo)
+    let result = foldr (.) (const extends) [ERecordExtend synInfo () label expr | (expr, label) <- items] ()
+    return result
     where
-        regularAssign pos val = do
-            reservedOp "="
-            EAssign () pos val <$> expression
-        operatorAssign pos val = do -- TODO possibly make these their own AST nodes
-            pos <- getSourcePos
-            sc
-            op <- choice (map char ['+', '-', '*', '/', '%'])
-            char '='
-            sc
-            EAssign () pos val . EBinOp () pos (Unqualified $ singleton op) val <$> expression
+        recordItem = (,) <$> identifier <*> (symbol "=" *> pExpression)
+        recordExtend info = option (ERecordEmpty info ()) (symbol "|" *> pExpression)
 
-access :: Parser UntypedExpr
-access = do
-    pos <- getSourcePos 
-    expr <- value
-    reservedOp "."
-    EAccess () pos expr <$> identifier
+pRecordRestrict :: Parser UntypedExpr
+pRecordRestrict = do
+    synInfo <- pSyntaxInfo
+    (expr, label) <- braces ((,) <$> pExpression <*> (symbol "-" *> identifier))
+    return (ERecordRestrict synInfo () expr label)
 
-index :: Parser UntypedExpr
-index = do
-    pos <- getSourcePos
-    expr <- value
-    idx <- brackets signedInteger -- if negative, let analyzer error
-    return (EIndex () pos expr (fromIntegral idx))
+pVariant :: Parser UntypedExpr
+pVariant = do
+    synInfo <- pSyntaxInfo
+    (label, expr) <- angles ((,) <$> (identifier <* symbol "=") <*> pExpression)
+    return (EVariant synInfo () expr label)
 
-arrowIndex :: Parser UntypedExpr
-arrowIndex = do
-    pos <- getSourcePos
-    expr <- value
-    reservedOp "->"
-    EArrow () pos expr <$> identifier
-
-deref :: Parser UntypedExpr
-deref = do
-    pos <- getSourcePos
-    symbol "*"
-    EDeref () pos <$> value
-
-ref :: Parser UntypedExpr
-ref = do
-    pos <- getSourcePos
-    symbol "&"
-    ERef () pos <$> value
-
-value :: Parser UntypedExpr
-value = do
-    pos <- getSourcePos 
-    array <|> (try sizeof <|> try call <|> try structCreate) <|> (ELit () pos <$> literal) <|> try variable <|> try block <|> parens expression
-
-sizeof :: Parser UntypedExpr 
-sizeof = do
-    pos <- getSourcePos 
-    reserved "sizeof"
-    arg <- try (Left <$> type') <|> (Right <$> expression)
-    return (ESizeof () pos arg)
-
-cast :: Parser UntypedExpr
-cast = do
-    pos <- getSourcePos 
-    typ <- parens type'
-    ECast () pos typ <$> value
-
-call :: Parser UntypedExpr
-call = do
-    pos <- getSourcePos
-    id <- identifier -- TODO
-    args <- parens (sepBy expression comma)
-    return $ ECall () pos (EVar () pos [] . Unqualified $ id) args
-
-structCreate :: Parser UntypedExpr
-structCreate = do
-    pos <- getSourcePos
-    structName <- typeIdentifier
-    fields <- braces (sepBy1 ((,) <$> identifier <*> (reservedOp "=" *> expression)) comma)
-    return (EStruct () pos (Unqualified structName) fields)
-
-variable :: Parser UntypedExpr
-variable = do
-    pos <- getSourcePos
-    EVar () pos [] . Unqualified <$> (identifier <|> parens operator)
-
-block :: Parser UntypedExpr
-block = braces $ do
-    pos <- getSourcePos
-    decls <- many (try declaration)
-    pos2 <- getSourcePos
-    result <- option (ELit () pos2 LUnit) expression
-    return $ EBlock () pos decls result
-
-array :: Parser UntypedExpr
-array = do
-    pos <- getSourcePos 
-    parsed <- brackets (try manyInitArray <|> regArrayLit)
-    return (parsed pos)
-    where
-        regArrayLit = do
-            exprs <- sepBy expression comma
-            return (\pos -> EArray () pos exprs)
-        manyInitArray = do
-            initExpr <- expression
-            semi
-            count <- decimal
-            return (\pos -> EArray () pos (replicate (fromIntegral count) initExpr))
+pBlock :: Parser UntypedExpr
+pBlock = braces (do
+    synInfo <- pSyntaxInfo
+    decls <- many (try pDecl)
+    synInfo' <- pSyntaxInfo
+    result <- option (ELit synInfo' () LUnit) pExpression
+    pure (EBlock synInfo () decls result))
 
 -- Literals
-literal :: Parser Lit
-literal = try (LFloat <$> signedFloat) <|> (LInt <$> integer)
+pLiteral :: Parser Lit
+pLiteral = try (LFloat <$> signed float) <|> (LInt <$> integer)
     <|> (LChar <$> charLiteral) <|> (LString . pack <$> stringLiteral)
-    <|> (LBool True <$ reserved "true") <|> (LBool False <$ reserved "false")
-    <|> (LUnit <$ reserved "()")
+    <|> (LBool True <$ symbol "true") <|> (LBool False <$ symbol "false")
+    <|> (LUnit <$ symbol "()")
 
 integer :: Parser Integer
-integer = try octal <|> try binary <|> try hexadecimal <|> signedInteger
+integer = try octal <|> try binary <|> try hexadecimal <|> signed decimal
 
--- Parse types
-type' :: Parser Type
-type' = typeArray <|> try typeCon <|> try typeFunc <|> typeBase
+-- Types
+pType :: Parser Type
+pType = try pArrowType <|> pRecordType <|> pVariantType <|> pTypePtr <?> "type"
 
-typeFunc :: Parser Type
-typeFunc = do
-    inputTypes <- sepBy typeCon comma
-    reservedOp "->"
-    TFunc inputTypes <$> type'
+pArrowType :: Parser Type
+pArrowType = do
+    paramTypes <- sepBy pTypeApp comma
+    symbol "->"
+    TArrow paramTypes <$> pType
 
-typeArray :: Parser Type
-typeArray = do
-    len <- brackets decimal
-    t <- try typeCon <|> typeBase
-    let typ = TArray t (fromIntegral len)
-    option typ (TPtr typ <$ symbol "*")
+pRecordType :: Parser Type
+pRecordType = braces (TRecord <$> pRowType)
 
-typeCon :: Parser Type
-typeCon = do
-    con <- Unqualified <$> typeIdentifier
-    params <- option [] (angles (sepBy type' comma))
-    let t = TCon con params
-    option t (TPtr t <$ symbol "*")
+pVariantType :: Parser Type
+pVariantType = angles (TVariant <$> pRowType)
 
-typeBase :: Parser Type
-typeBase = do
-    t <- typePrim <|> (TVar . TV <$> identifier) <|> parens type'
-    option t (TPtr t <$ symbol "*")
-
-typePrim :: Parser Type
-typePrim = choice $ map (\s -> TCon (Unqualified s) [] <$ reserved s)
-    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "bool", "unit"]
-
--- Parse patterns
-pattern :: Parser Pattern
-pattern = parens pattern <|> patternCon <|> patternWild <|> patternVar <|> patternLit
-
-patternCon :: Parser Pattern
-patternCon = do
-    conName <- typeIdentifier
-    binds <- option [] (parens (sepBy (identifier <|> symbol "_") comma))
-    return (PCon (Unqualified conName) binds)
-
-patternWild :: Parser Pattern
-patternWild = PWild <$ reserved "_"
-
-patternVar :: Parser Pattern
-patternVar = PVar <$> identifier
-
-patternLit :: Parser Pattern
-patternLit = PLit <$> literal
-
--- Other
-typeAnnot :: Parser Type
-typeAnnot = colon *> type'
-
-params :: Parser [(Text, Maybe Type)]
-params = parens (sepBy ((,) <$> identifier <*> optional typeAnnot) comma)
-
--- Run parser
-parse :: [(String, Text)] -> Either String UntypedProgram
-parse files =
-    case sequence (fst $ S.runState (parseProgram files) (builtinOpers, [])) of
-        Left err -> Left (errorBundlePretty err)
-        Right prog -> Right prog
+pRowType :: Parser Type
+pRowType = option TRowEmpty rowExtend
     where
-        parseProgram files = do
-            mapM_ (uncurry (runParserT parseModuleOpDefs)) files
-            traverse (uncurry (runParserT parseModule)) files
+        rowExtend = do
+            rowsParsed <- sepBy1 row comma
+            let rowExtends = map (uncurry TRowExtend) rowsParsed
+            extended <- option TRowEmpty (symbol "|" *> (try pVarType <|> pRowType))
 
-builtinOpers :: [OperatorDef]
-builtinOpers =
-    [OperatorDef APrefix 10 "-",
-     OperatorDef ALeft 10 "*", OperatorDef ALeft 10 "/", OperatorDef ALeft 10 "%",
-     OperatorDef ALeft 5 "+", OperatorDef ALeft 5 "-",
-     OperatorDef ALeft 3 "==", OperatorDef ALeft 3 "!=",
-     OperatorDef ALeft 4 ">", OperatorDef ALeft 4 "<",
-     OperatorDef ALeft 4 ">=", OperatorDef ALeft 4 "<=",
-     OperatorDef ALeft 1 "||", OperatorDef ALeft 2 "&&"]
+            pure (foldr ($) extended rowExtends)
+        row = (,) <$> identifier <*> (colon *> pType)
+
+pTypePtr :: Parser Type
+pTypePtr = do
+    typ <- pTypeApp
+    option typ (do
+        symbol "*"
+        pure (TPtr typ))
+
+pTypeApp :: Parser Type
+pTypeApp = do
+    typ <- pBaseType
+    option typ (do
+        args <- angles (sepBy1 pType comma)
+        pure (TApp typ args))
+
+pBaseType :: Parser Type
+pBaseType = pConstType <|> pVarType <|> parens pType
+
+pVarType :: Parser Type
+pVarType = TVar . TV <$> identifier
+
+pConstType :: Parser Type
+pConstType = TConst <$> (userDefined <|> primitive)
+    where
+        userDefined = Unqualified <$> typeIdentifier
+        primitive = choice $ map (\s -> Unqualified s <$ symbol s)
+            ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "str", "bool", "unit"]
+
+-- Patterns
+pPattern :: Parser Pattern
+pPattern = parens pPattern <|> try pVariantPattern <|> pWildPattern <|> pVarPattern <|> pLitPattern
+
+pVariantPattern :: Parser Pattern
+pVariantPattern = PVariant <$> identifier <*> (Unqualified <$> identifier) -- No nested patterns for now      <*> pPattern
+
+pWildPattern :: Parser Pattern
+pWildPattern = PWild <$ symbol "_"
+
+pVarPattern :: Parser Pattern
+pVarPattern = PVar . Unqualified <$> identifier
+
+pLitPattern :: Parser Pattern
+pLitPattern = PLit <$> pLiteral
+
+-- Utility
+pSyntaxInfo :: Parser SyntaxInfo
+pSyntaxInfo = SyntaxInfo <$> getSourcePos
+
+pParams :: Parser [(Name, Maybe Type)]
+pParams = parens (sepBy ((,) . Unqualified <$> identifier <*> optional pTypeAnnot) comma)
+
+pTypeAnnot :: Parser Type
+pTypeAnnot = colon *> pType
+
+-- Run
+parse :: [(String, Text)] -> Either String UntypedProgram
+parse files = do
+    let opdefs = concat (concat (traverse (uncurry (runParser (runReaderT pModuleOpDefs []))) files))
+    left errorBundlePretty (traverse (uncurry (runParser (runReaderT pModule opdefs))) files)
