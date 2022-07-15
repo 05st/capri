@@ -31,6 +31,7 @@ dependencies:
 - process
 - uniplate
 - lens
+- filepath
 
 library:
   source-dirs: src

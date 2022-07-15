@@ -48,10 +48,10 @@ capriHeaders = "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\nt
 capriEntryPoint :: Builder
 capriEntryPoint = "int main() {\n\tmain__main();\n\treturn 0;\n}\n"
 
-generate :: TypedProgram -> IO ()
+generate :: TypedProgram -> IO [FilePath]
 generate prog =
     case evalState (runExceptT (genProgram prog)) defaultGenState of
-        Left err -> print err
+        Left err -> [] <$ print err
         Right mods -> do
             files <- traverse (const (emptySystemTempFile "capri.c")) mods
             sequence_ [TIO.writeFile file (toLazyText (capriHeaders <> builder)) | (file, builder) <- zip files mods]
@@ -59,7 +59,7 @@ generate prog =
             entryPointFile <- emptySystemTempFile "capri.c"
             TIO.writeFile entryPointFile (toLazyText capriEntryPoint)
 
-            print (entryPointFile : files)
+            return (entryPointFile : files)
     where
         defaultGenState = GenState mempty mempty mempty 0 mempty mempty 0 0
 

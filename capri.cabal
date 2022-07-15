@@ -45,6 +45,7 @@ library
       base >=4.7 && <5
     , containers
     , directory
+    , filepath
     , lens
     , megaparsec
     , mtl
@@ -68,6 +69,7 @@ executable capri-exe
     , capri
     , containers
     , directory
+    , filepath
     , lens
     , megaparsec
     , mtl
@@ -92,6 +94,7 @@ test-suite capri-test
     , capri
     , containers
     , directory
+    , filepath
     , lens
     , megaparsec
     , mtl
