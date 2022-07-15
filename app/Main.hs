@@ -22,6 +22,7 @@ data Options = Options
     , outPath :: FilePath
     , cc :: String
     , stlDir :: Maybe FilePath
+    , noStl :: Bool
     }
 
 options :: Parser Options
@@ -30,6 +31,7 @@ options = Options
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
     <*> strOption (long "cc" <> short 'c' <> value "gcc" <> help "C Compiler as backend")
     <*> (optional $ strOption (long "stl" <> metavar "DIR" <> help "Standard library directory"))
+    <*> switch (long "no-stl" <> help "Don't search for STL directory")
 
 main :: IO ()
 main = runOpts =<< execParser (options `withInfo` infoString)
@@ -45,12 +47,15 @@ readDir path = do
         cprFilePaths -> traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
 
 runOpts :: Options -> IO ()
-runOpts (Options srcDir outPath cc stlDir) = do
+runOpts (Options srcDir outPath cc stlDir noStl) = do
     readInputs <- readDir srcDir
-    stlDirInputs <- 
-        case stlDir of
-            Just path -> readDir path
-            Nothing -> return []
+    stlDirInputs <-
+        if noStl then return [] else
+            case stlDir of
+                Just path -> readDir path
+                Nothing -> do
+                    pathFromEnv <- getEnv "CAPRI_STL"
+                    readDir pathFromEnv
     let inputs = stlDirInputs ++ readInputs
 
     case (parse inputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . inferProgram of
