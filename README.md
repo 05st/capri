@@ -21,24 +21,5 @@ Planned features:
 
 Examples can be found [here](https://github.com/05st/capri/tree/master/examples).
 
-## Documentation
-Language documentation can be found on the [wiki](https://github.com/05st/capri/wiki).
-
-## Installation
-### Compiling from source
-1. Ensure [Stack](https://docs.haskellstack.org/en/stable/README/) and [Git](https://git-scm.com/) are installed. *\**
-2. Clone this repository (`git clone https://github.com/05st/capri.git`).
-3. Run `stack build` in the cloned repository.
-4. The resulting binary can be found under `./.stack-work/dist/<something>/build/capri-exe/`.
-
-*\* It's recommended to install Stack via [ghcup](https://www.haskell.org/ghcup/).*
-
-### Downloading precompiled binaries
-Check the [releases](https://github.com/05st/capri/releases) page for the latest precompiled binaries.
-
-## Usage
-Running the compiler without any arguments will treat the current directory as the project source directory.
-
-By default, the compiler will look in the `CAPRI_STL` environment variable to search for the standard library. This can be avoided by passing in the path manually with `--stl`, or asking the compiler to not include the standard library with `--no-stl`.
-
-Run `capri -h` for more information on usage.
+## Documentation, Installation/Usage Instructions
+Language documentation and instructions can be found on the [docs](https://05st.github.io/capri-website/).
