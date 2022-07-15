@@ -336,6 +336,7 @@ parse :: FilePath -> [(FilePath, Text)] -> FilePath -> [(FilePath, Text)] -> Eit
 parse rootDir files stlRootDir stlFiles = do
     let opdefs = concat (concat (traverse (uncurry (runParser (runReaderT pModuleOpDefs []))) (stlFiles ++ files)))
 
+    -- Yeah I know this code is quite a monstrosity
     let (filePaths, contents) = unzip files
     let parseFiles = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath rootDir filePath)) opdefs) filePath content) files
     let parseStl = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath stlRootDir filePath)) opdefs) filePath content) stlFiles

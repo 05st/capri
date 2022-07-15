@@ -6,6 +6,7 @@
 module Codegen where
 
 import Data.Text (Text, unpack, pack)
+import Data.Char
 import qualified Data.Text as T
 import Data.Text.Lazy.Builder
 import qualified Data.Text.Lazy.IO as TIO
@@ -87,13 +88,12 @@ genModule mod = do
 genTopLvl :: TypedTopLvl -> Gen ()
 genTopLvl = \case
     TLFunc info (TArrow ptypes rtype) _ isOper name paramsWithAnnots _ body -> do
-        nameBuilder <- if isOper then handleOper name else return (convertName name)
         let (params, _) = unzip paramsWithAnnots
         ptypes' <- traverse convertType ptypes
         rtype' <- convertType rtype
 
         let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> convertName param | (param, ptype) <- zip params ptypes'])
-        let fnDeclBuilder = rtype' <> " " <> nameBuilder <> "(" <> paramsBuilder <> ")"
+        let fnDeclBuilder = rtype' <> " " <> convertName name <> "(" <> paramsBuilder <> ")"
 
         write (fnDeclBuilder <> " {\n")
         flushTo output
@@ -190,15 +190,13 @@ genExpr = \case
             <> ")\");\nexit(-1);\n}\n")
         write (curr <> rvar)
     EBinOp _ _ oper a b -> do
-        name <- handleOper oper
-        write "("
+        write (convertName oper <> "(")
         genExpr a
         write ", "
         genExpr b
         write ")"
     EUnaOp _ _ oper expr -> do
-        name <- handleOper oper
-        write "("
+        write (convertName oper <> "(")
         genExpr expr
         write ")"
     EClosure {} -> throwError "no closures yet"
@@ -299,6 +297,7 @@ genLit = \case
     LBool False -> "false"
     LUnit -> "0"
 
+{-
 handleOper :: Name -> Gen Builder
 handleOper name = do
     map <- gets _operMap
@@ -310,10 +309,21 @@ handleOper name = do
             return count
         Just id -> return id
     return ("_op_" <> fromString (show id))
-        
+-}
+
+convertName :: Name -> Builder
+convertName name =
+    let converted = convertNameToString name in
+        (fromString . concat ) [txt | char <- converted, let txt = if isAlphaNum char || char == '_' then [char] else show (ord char)]
+    where
+        convertNameToString (Unqualified n) = T.unpack n
+        convertNameToString (Qualified ns n) = T.unpack (T.intercalate "__" (ns ++ [n]))
+
+{-
 convertName :: Name -> Builder
 convertName (Unqualified n) = fromText n
 convertName (Qualified ns n) = fromText (T.intercalate "__" (ns ++ [n]))
+-}
 
 convertType :: Type -> Gen Builder
 convertType = \case
