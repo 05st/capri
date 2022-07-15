@@ -51,19 +51,28 @@ preInference :: UntypedProgram -> Infer ()
 preInference prog = mapM_ initializeTopLvl (concatMap modTopLvls prog)
     where
         initializeTopLvl (TLFunc _ _ _ _ name _ _ _) = do
-            env <- gets preTopLvlEnv
-            state <- get
             typeVar <- fresh
+            state <- get
+            env <- gets preTopLvlEnv
             let TVar tv = typeVar
             put (state { preTopLvlEnv = M.insert name tv env })
         initializeTopLvl TLType {} = return ()
 
 inferModule :: UntypedModule -> Infer TypedModule
-inferModule (Module info name path imports topLvls) = do
-    env <- gets environment
-    -- trace (show env) $ return ()
+inferModule (Module info name path imports externs topLvls) = do
+    let (externNames, externTypes) = unzip externs
+    let externPolyTypes = map (Forall []) externTypes
+    let externEnv = M.fromList (zip (map Unqualified externNames) externPolyTypes)
+
+    state <- get
+    put (state { environment = environment state `M.union` externEnv })
+
     topLvls' <- traverse inferTopLvl topLvls
-    return (Module info name path imports topLvls')
+
+    state <- get
+    put (state { environment = environment state `M.difference` externEnv })
+
+    return (Module info name path imports externs topLvls')
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
@@ -308,7 +317,7 @@ constrain const = do
 fresh :: Infer Type
 fresh = do
     state <- get
-    count <- gets freshCount
+    let count = freshCount state
     put (state { freshCount = count + 1 })
     return . TVar . TV . pack . ('_':) $ varNames !! count
     where

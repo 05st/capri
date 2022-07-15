@@ -21,6 +21,7 @@ data Options = Options
     { srcDir :: FilePath
     , outPath :: FilePath
     , cc :: String
+    , stlDir :: Maybe FilePath
     }
 
 options :: Parser Options
@@ -28,6 +29,7 @@ options = Options
     <$> strOption (long "dir" <> short 'd' <> value "./" <> metavar "DIR" <> help "Source directory")
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
     <*> strOption (long "cc" <> short 'c' <> value "gcc" <> help "C Compiler as backend")
+    <*> (optional $ strOption (long "stl" <> metavar "DIR" <> help "Standard library directory"))
 
 main :: IO ()
 main = runOpts =<< execParser (options `withInfo` infoString)
@@ -43,13 +45,19 @@ readDir path = do
         cprFilePaths -> traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
 
 runOpts :: Options -> IO ()
-runOpts (Options srcDir outPath cc) = do
-    inputs <- readDir srcDir
+runOpts (Options srcDir outPath cc stlDir) = do
+    readInputs <- readDir srcDir
+    stlDirInputs <- 
+        case stlDir of
+            Just path -> readDir path
+            Nothing -> return []
+    let inputs = stlDirInputs ++ readInputs
 
     case (parse inputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . inferProgram of
         Left err -> putStrLn err
         Right typed -> do
             genFiles <- generate typed
+            print genFiles
             callProcess cc (genFiles ++ ["-O2", "-o", outPath])
 
 maybeToEither :: Maybe a -> Either a ()

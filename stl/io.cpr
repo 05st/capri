@@ -1,0 +1,7 @@
+module io;
+
+extern printf : str, str -> unit;
+
+pub fn print(text: str): unit {
+    printf("%s", text);
+};

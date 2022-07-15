@@ -14,11 +14,13 @@ import Name
 type Program a = [Module a]
 
 type Import = (Bool, [Text])
+type Extern = (Text, Type)
 data Module a = Module
     { modSynInfo :: SyntaxInfo
     , modName :: Text
     , modPath :: [Text]
     , modImports :: [Import]
+    , modExterns :: [Extern]
     , modTopLvls :: [TopLvl a]
     } deriving (Show, Functor)
 

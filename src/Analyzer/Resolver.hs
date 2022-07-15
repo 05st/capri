@@ -28,6 +28,7 @@ data ResolveState = ResolveState
     , typeAliasMap :: M.Map Name Type
     , curMod :: Maybe UntypedModule 
     , extraSet :: S.Set Name -- probably not the best way to check for duplicate top levels but works
+    , externSet :: S.Set Text
     , tmpScopeCount :: Int
     , importsMap :: M.Map [Text] [Import]
     } deriving (Show)
@@ -41,6 +42,7 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
             typeAliasMap = M.empty,
             curMod = Nothing,
             extraSet = S.empty,
+            externSet = S.empty,
             tmpScopeCount = 0,
             importsMap = initImportsMap
         }
@@ -58,7 +60,7 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
 resolveModule :: UntypedModule -> Resolve UntypedModule
 resolveModule mod = do
     state <- get
-    put (state { curMod = Just mod })
+    put (state { curMod = Just mod, externSet = S.fromList (map fst (modExterns mod)) })
     resolvedTopLvls <- traverse resolveTopLvl (modTopLvls mod)
     return (mod { modTopLvls = resolvedTopLvls })
 
@@ -254,7 +256,11 @@ qualifyName info name = do
             let exists = concatMap (\imp -> let fullName = Qualified (snd imp) name in [fullName | fullName `S.member` set]) allImports
             isPubs <- gets pubMap
             case filter (\n -> fromMaybe False (M.lookup n isPubs)) exists of
-                [] -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Undefined " ++ show name))
+                [] -> do
+                    externs <- gets externSet
+                    if name `S.member` externs
+                        then return (Unqualified name)
+                        else throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Undefined " ++ show name))
                 [onlyOne] -> return onlyOne
                 multiple -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Multiple definitions found: " ++ show multiple))
     where

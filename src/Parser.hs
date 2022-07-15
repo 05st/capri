@@ -33,14 +33,21 @@ pModule = do
     symbol "module"
     name <- identifier
     semi
-    imports <- many pImport
-    Module synInfo name [] imports <$> manyTill pTopLvlDecl eof
+
+    externs <- many pExtern
+    imports <- many (try pImport)
+
+    Module synInfo name [] imports externs <$> manyTill pTopLvlDecl eof
     where
         pImport = do
-            -- isPub <- option False (True <$ symbol "pub")
-            let isPub = False
+            isPub <- option False (True <$ symbol "pub")
             symbol "import"
             (isPub,) <$> (sepBy1 identifier (symbol "::") <* semi)
+        pExtern = do
+            symbol "extern"
+            name <- identifier
+            symbol ":"
+            (name,) <$> (pType <* semi)
 
 -- Top Level Declarations
 pTopLvlDecl :: Parser UntypedTopLvl
