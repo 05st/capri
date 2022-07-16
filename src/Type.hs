@@ -22,7 +22,7 @@ data Type
     | TRowEmpty
     | TRowExtend Text Type Row
     | TPtr Type
-    deriving (Eq, Data, Ord, Show)
+    deriving (Eq, Data, Ord)
 -- | TRowExtend (LabelMap Type) Row
 
 newtype TVar
@@ -61,7 +61,6 @@ pattern TString = TConst (Unqualified "str")
 pattern TBool = TConst (Unqualified "bool")
 pattern TUnit = TConst (Unqualified "unit")
 
-{-
 instance Show Type where
     show (TConst name) = show name
     show (TVar tv) = show tv
@@ -69,11 +68,10 @@ instance Show Type where
     show (TArrow ps rt) = intercalate ", " (map show ps) ++ " -> " ++ show rt
     show (TRecord row) = "{" ++ show row ++ "}"
     show (TVariant row) = "<" ++ show row ++ ">"
-    show TRowEmpty = ""
+    show TRowEmpty = "<empty row>"
     show (TRowExtend l t TRowEmpty) = unpack l ++ ": " ++ show t
     show (TRowExtend l t r) = unpack l ++ ": " ++ show t ++ ", " ++ show r
     show (TPtr t) = show t ++ "*"
--}
 
 instance Show TVar where
     show (TV name) = unpack name

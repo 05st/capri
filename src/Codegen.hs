@@ -36,8 +36,6 @@ data GenState = GenState
     , _typedefs :: Builder
     , _tmpVarCount :: Int
     , _structUnionMap :: M.Map Type Int
-    , _operMap :: M.Map Name Int
-    , _operCount :: Int
     , _structUnionCount :: Int
     }
 
@@ -62,7 +60,7 @@ generate prog =
 
             return (entryPointFile : files)
     where
-        defaultGenState = GenState mempty mempty mempty 0 mempty mempty 0 0
+        defaultGenState = GenState mempty mempty mempty 0 mempty 0
 
 genProgram :: TypedProgram -> Gen [Builder]
 genProgram = traverse genModule

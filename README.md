@@ -15,9 +15,10 @@ The compiler currently targets only C. Everything in the language is subject to 
 Planned features:
 - Parametric polymorphism
 - Row polymorphism
-- Ad-hoc polymorphism (most likely via typeclasses)
-- Match expression exhaustiveness checking
-- Possibly some sort of memory management
+- Ad-hoc polymorphism (via typeclasses)
+- Optional garbage collector ([Boehm-Demers-Weiser garbage collector](https://en.wikipedia.org/wiki/Boehm_garbage_collector))
+- Closures
+- Pattern matching exhaustiveness checking
 
 Examples can be found [here](https://github.com/05st/capri/tree/master/examples).
 

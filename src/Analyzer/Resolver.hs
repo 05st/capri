@@ -39,7 +39,7 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         initResolveState = ResolveState {
             nameSet = initNameSet,
             pubMap = initPubMap,
-            typeAliasMap = M.empty,
+            typeAliasMap = initTypeAliasMap,
             curMod = Nothing,
             extraSet = S.empty,
             externSet = S.empty,
@@ -50,6 +50,9 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         topLvlEntry mod tl = [(head $ fullNameHelper mod tl, isTopLvlPub tl)]
         initImportsMap = M.fromList $ map (\mod -> (getModFullName mod, modImports mod)) prog
         initNameSet = S.fromList $ concatMap (\mod -> concatMap (fullNameHelper mod) (modTopLvls mod)) prog
+        initTypeAliasMap = M.fromList $ concatMap (\mod -> concatMap (typeAliasEntry mod) (modTopLvls mod)) prog
+        typeAliasEntry mod tl@(TLType _ _ _ _ typ) = [(head $ fullNameHelper mod tl, typ)]
+        typeAliasEntry _ _ = []
         -- ^ contains all of the top level declarations of each module, this is so mutual recursion works
         
         fullNameHelper mod (TLFunc _ _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
@@ -79,8 +82,8 @@ resolveTopLvl = \case
 
     TLType info isPub name@(Unqualified unqual) tvars typ -> do
         name' <- topLvlDefinition info unqual
-        state <- get
-        put (state { typeAliasMap = M.insert name' typ (typeAliasMap state) })
+        -- state <- get
+        -- put (state { typeAliasMap = M.insert name' typ (typeAliasMap state) })
         TLType info isPub name' tvars <$> resolveType info typ
 
     _ -> undefined
@@ -191,9 +194,10 @@ resolveType info = \case
     typ@(TConst name) -> do
         name' <- resolveName info name
         aliases <- gets typeAliasMap
+        verifyNameExists info name'
         case M.lookup name' aliases of
             Just parent -> resolveType info parent
-            Nothing -> return (TConst name')
+            Nothing -> throwError (UndefinedError (syntaxInfoSourcePos info) (show name')) -- return (TConst name')
     TApp typ typs -> TApp <$> resolveType info typ <*> traverse (resolveType info) typs
     TArrow typs typ -> TArrow <$> traverse (resolveType info) typs <*> resolveType info typ
     TPtr typ -> TPtr <$> resolveType info typ
@@ -217,7 +221,7 @@ checkNameDuplicate info name = do
     set <- gets nameSet
     fullScope <- prependModulePath curLocalScope
     when (Qualified fullScope name `S.member` set)
-        $ throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Redefinition of " ++ show name))
+        $ throwError (RedefinitionError (syntaxInfoSourcePos info) (show name))
 
 insertNameToSet :: Text -> Resolve Name
 insertNameToSet name = do
@@ -240,7 +244,7 @@ verifyNameExists info (Unqualified unqual) =
     throwError (GenericAnalyzerError (syntaxInfoSourcePos info) "Attempt to verify unqualified name")
 verifyNameExists info name@Qualified {} = do
     set <- gets nameSet
-    unless (name `S.member` set) $ throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Undefined " ++ show name))
+    unless (name `S.member` set) $ throwError (UndefinedError (syntaxInfoSourcePos info) (show name))
 
 qualifyName :: SyntaxInfo -> Text -> Resolve Name
 qualifyName info name = do
@@ -260,7 +264,7 @@ qualifyName info name = do
                     externs <- gets externSet
                     if name `S.member` externs
                         then return (Unqualified name)
-                        else throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Undefined " ++ show name))
+                        else throwError (UndefinedError (syntaxInfoSourcePos info) (show name))
                 [onlyOne] -> return onlyOne
                 multiple -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Multiple definitions found: " ++ show multiple))
     where
