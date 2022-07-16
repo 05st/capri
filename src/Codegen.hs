@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import Data.Text.Lazy.Builder
 import qualified Data.Text.Lazy.IO as TIO
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.List
 
 import Control.Monad.Except
@@ -25,6 +26,8 @@ import SyntaxInfo
 import Name
 import Type
 
+import Analyzer.Substitution
+
 import Text.Megaparsec.Pos (SourcePos, sourcePosPretty)
 
 import Debug.Trace
@@ -37,6 +40,9 @@ data GenState = GenState
     , _tmpVarCount :: Int
     , _structUnionMap :: M.Map Type Int
     , _structUnionCount :: Int
+    , _polyRequests :: M.Map (Name, [Type]) Int
+    , _polyCount :: Int
+    , _polyBaseMap :: M.Map Name TypedTopLvl
     }
 
 makeLenses ''GenState
@@ -51,19 +57,33 @@ generate :: TypedProgram -> IO [FilePath]
 generate prog =
     case evalState (runExceptT (genProgram prog)) defaultGenState of
         Left err -> [] <$ print err
-        Right mods -> do
+        Right (mods, polys) -> do
             files <- traverse (const (emptySystemTempFile "capri.c")) mods
             sequence_ [TIO.writeFile file (toLazyText (capriHeaders <> builder)) | (file, builder) <- zip files mods]
             
             entryPointFile <- emptySystemTempFile "capri.c"
             TIO.writeFile entryPointFile (toLazyText capriEntryPoint)
 
-            return (entryPointFile : files)
-    where
-        defaultGenState = GenState mempty mempty mempty 0 mempty 0
+            polyFile <- emptySystemTempFile "capri.c"
+            TIO.writeFile polyFile (toLazyText (capriHeaders <> polys))
 
-genProgram :: TypedProgram -> Gen [Builder]
-genProgram = traverse genModule
+            return (entryPointFile : polyFile : files)
+    where
+        defaultGenState = GenState mempty mempty mempty 0 mempty 0 mempty 0 mempty
+
+genProgram :: TypedProgram -> Gen ([Builder], Builder)
+genProgram prog = do
+    modBuilders <- traverse genModule prog
+
+    output .= mempty
+    buffer .= mempty
+    typedefs .= mempty
+
+    polyReqs <- gets _polyRequests
+    mapM_ genPolyRequest (M.toList polyReqs)
+    tdefs <- gets _typedefs
+    oput <- gets _output 
+    return (modBuilders, tdefs <> oput)
 
 genModule :: TypedModule -> Gen Builder
 genModule mod = do
@@ -83,26 +103,60 @@ genModule mod = do
 
     gets _output
 
+genPolyRequest :: ((Name, [Type]), Int) -> Gen ()
+genPolyRequest ((name, typs), id) = do
+    baseMap <- gets _polyBaseMap
+    case M.lookup name baseMap of
+        Nothing -> undefined
+        Just (TLFunc _ typ@(TArrow ptypes rtype) _ _ _ paramsWithAnnots _ body) -> do
+            let tvars = S.toList (tvs typ)
+            let subst = M.fromList (zip tvars typs)
+            genFunction (apply subst ptypes) (apply subst rtype) ("_poly_" <> fromString (show id)) (map fst paramsWithAnnots) body
+            flushTo output
+        _ -> error "not yet implemented"
+
 genTopLvl :: TypedTopLvl -> Gen ()
 genTopLvl = \case
-    TLFunc info (TArrow ptypes rtype) _ isOper name paramsWithAnnots _ body -> do
-        let (params, _) = unzip paramsWithAnnots
-        ptypes' <- traverse convertType ptypes
-        rtype' <- convertType rtype
+    tl@(TLFunc info typ@(TArrow ptypes rtype) _ isOper name paramsWithAnnots _ body) -> do
+        let tvars = tvs typ
+        let isPoly = not (null tvars)
+        if isPoly
+            then do -- Add to polybasemap
+                state <- get
+                put (state { _polyBaseMap = M.insert name tl (_polyBaseMap state) })
+            else do
+                genFunction ptypes rtype (convertName name) (map fst paramsWithAnnots) body
 
-        let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> convertName param | (param, ptype) <- zip params ptypes'])
-        let fnDeclBuilder = rtype' <> " " <> convertName name <> "(" <> paramsBuilder <> ")"
-
-        write (fnDeclBuilder <> " {\n")
-        flushTo output
-
-        write "return "
-        genExpr body
-
-        write ";\n}\n"
-        flushTo output
     TLType info _ name typeParams typ -> return ()
     _ -> throwError "genTopLvl unhandled case"
+
+genFunction :: [Type] -> Type -> Builder -> [Name] -> TypedExpr -> Gen ()
+genFunction ptypes rtype nameBuilder params bodyExpr = do
+    ptypes' <- traverse convertType ptypes
+    rtype' <- convertType rtype
+
+    let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> convertName param | (param, ptype) <- zip params ptypes'])
+    let fnDeclBuilder = rtype' <> " " <> nameBuilder <> "(" <> paramsBuilder <> ")"
+
+    write (fnDeclBuilder <> " {\n")
+    flushTo output
+
+    write "return "
+    genExpr bodyExpr
+
+    write ";\n}\n"
+    flushTo output
+
+handlePolyRequest :: Name -> [Type] -> Gen Builder
+handlePolyRequest name typs = do
+    state <- get
+    case M.lookup (name, typs) (_polyRequests state) of
+        Just id -> return ("_poly_" <> fromString (show id))
+        Nothing -> do
+            count <- gets _polyCount
+            put (state { _polyRequests = M.insert (name, typs) count (_polyRequests state) })
+            polyCount += 1
+            return ("_poly_" <> fromString (show count))
 
 genDecl :: TypedDecl -> Gen ()
 genDecl = \case
@@ -138,7 +192,10 @@ genStmt = \case
 genExpr :: TypedExpr -> Gen ()
 genExpr = \case
     ELit _ _ lit -> write (genLit lit)
-    EVar _ _ typs name -> write (convertName name)
+    EVar _ _ [] name -> write (convertName name)
+    EVar _ _ typs name -> do
+        toWrite <- handlePolyRequest name typs
+        write toWrite
     EAssign _ _ l r -> do
         genExpr l
         write " = "
@@ -353,7 +410,7 @@ convertType = \case
 
                 let countBldr = fromString (show count)
                 def <- convertType row
-                typedefs <>= "typedef struct {" <> def <> "} _record_" <> countBldr <> ";\n"
+                typedefs <>= "typedef struct {char _dummy; " <> def <> "} _record_" <> countBldr <> ";\n"
 
                 return ("_record_" <> countBldr)
     t@(TVariant row) -> do
@@ -367,7 +424,7 @@ convertType = \case
 
                 let countBldr = fromString (show count)
                 def <- convertType row
-                typedefs <>= "typedef struct {union {" <> def <> "}; int _type;} _variant_" <> countBldr <> ";\n"
+                typedefs <>= "typedef struct {union {char _dummy; " <> def <> "}; int _type;} _variant_" <> countBldr <> ";\n"
 
                 typeIds <- genVariantTypeIds countBldr row 0 []
                 typedefs <>= typeIds
@@ -376,7 +433,11 @@ convertType = \case
     TRowEmpty -> return ""
     TRowExtend label fieldType rest -> do
         ftype <- convertType fieldType
-        rtype <- convertType rest
+        rtype <-
+            case rest of
+                TRecord row -> convertType row
+                TVariant row -> convertType row
+                _ -> convertType rest
         return (ftype <> " " <> fromText label <> ";" <> rtype)
     TPtr t -> (<> "*") <$> convertType t
     _ -> undefined

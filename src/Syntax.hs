@@ -15,6 +15,10 @@ type Program a = [Module a]
 
 type Import = (Bool, [Text])
 type Extern = (Text, Type)
+
+type TypeAnnot = Maybe Type
+type Params = [(Name, TypeAnnot)]
+
 data Module a = Module
     { modSynInfo :: SyntaxInfo
     , modName :: Text
@@ -59,9 +63,6 @@ data Expr a
     -- | ERecordExtend SyntaxInfo a (LabelMap (Expr a)) (Expr a)
     | EVariant SyntaxInfo a (Expr a) Text
     deriving (Show, Functor, Data)
-
-type TypeAnnot = Maybe Type
-type Params = [(Name, TypeAnnot)]
 
 data Lit
     = LInt Integer

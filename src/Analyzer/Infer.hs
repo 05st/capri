@@ -97,7 +97,7 @@ inferFn pos name params rtann body = do
     subst <- liftEither (runSolve consts)
     env <- gets environment
     let typ = apply subst (TArrow ptypes rtype)
-        scheme = Forall [] typ -- TODO: generalize env typ for polymorphism
+        scheme = generalize env typ -- polymorphism
 
     let (TArrow ptypes' rtype') = typ
     when (isJust rtann) (constrain $ Constraint pos rtype' (fromJust rtann))
@@ -150,9 +150,11 @@ inferExpr :: UntypedExpr -> Infer TypedExpr
 inferExpr = \case
     ELit info _ lit -> return (ELit info (inferLit lit) lit)
 
-    EVar info _ _ name -> do
+    EVar info _ instTypes name -> do
         typ <- lookupType info name
-        return (EVar info typ [] name)
+        case S.toList (tvs instTypes) of
+            [] -> return (EVar info typ instTypes name)
+            tvars -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Cannot instantiate type paramater(s) with type variable(s) " ++ show tvars))
 
     EAssign info _ l r -> do
         l' <- inferExpr l
@@ -266,17 +268,21 @@ inferExpr = \case
     ERecordExtend info _ expr label record -> do
         expr' <- inferExpr expr
         record' <- inferExpr record
+
         let etype = exprType expr'
         let rtype = exprType record'
-        restRowTyp <- fresh
+
         fieldTyp <- fresh
-        let param1Typ = fieldTyp
-        let param2Typ = TRecord restRowTyp
-        let returnTyp = TRecord (TRowExtend label fieldTyp restRowTyp)
+        restRowTyp <- fresh
+
         let pos = syntaxInfoSourcePos info
-        constrain (Constraint pos param1Typ etype)
-        constrain (Constraint pos param2Typ rtype)
-        return (ERecordExtend info returnTyp expr' label record')
+
+        constrain (Constraint pos fieldTyp etype)
+        constrain (Constraint pos (TRecord restRowTyp) rtype)
+
+        let retTyp = TRecord (TRowExtend label fieldTyp restRowTyp)
+
+        return (ERecordExtend info retTyp expr' label record')
 
     EVariant info _ expr label -> do
         restRowTyp <- fresh
@@ -381,7 +387,18 @@ searchReturns = exprs
         stmtsF x = []
 
 -- Unification
-type Solve = ExceptT AnalyzerError Identity
+type Solve = ExceptT AnalyzerError (State SolveState)
+newtype SolveState = SolveState
+    { freshCount' :: Int }
+
+fresh' :: Solve Type
+fresh' = do
+    state <- get
+    let count = freshCount' state
+    put (state { freshCount' = count + 1 })
+    return . TVar . TV . pack . ("__" ++ ) $ varNames !! count
+    where
+        varNames = [1..] >>= flip replicateM ['a'..'z']
 
 compose :: Substitution -> Substitution -> Substitution
 compose a b = M.map (apply a) b `M.union` a
@@ -423,8 +440,11 @@ rewriteRow pos row2 label1 ty1 =
             return (apply su1 restRow2, su1)
         TRowExtend label2 ty2 restRow2 -> do
             (recurseTyp, recurseSub) <- rewriteRow pos restRow2 label1 ty1
-            return (TRowExtend label2 ty2 recurseTyp, recurseSub)
-        tv@TVar {} -> return (tv, M.empty)
+            return (apply recurseSub (TRowExtend label2 ty2 recurseTyp), recurseSub)
+        tv@TVar {} -> do
+            restTv <- fresh'
+            su1 <- unify pos tv (TRowExtend label1 ty1 restTv)
+            return (apply su1 restTv, su1)
         _ -> throwError (GenericAnalyzerError pos "Row type expected")
 
 bind :: SourcePos -> TVar -> Type -> Solve Substitution
@@ -442,4 +462,4 @@ solve s c =
             solve nsub (apply nsub cs)
 
 runSolve :: [Constraint] -> Either AnalyzerError Substitution
-runSolve cs = runIdentity (runExceptT $ solve M.empty cs)
+runSolve cs = evalState (runExceptT $ solve M.empty cs) (SolveState { freshCount' = 0 })

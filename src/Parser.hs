@@ -209,7 +209,10 @@ pLiteralExpr = do
 pVariable :: Parser UntypedExpr
 pVariable = do
     synInfo <- pSyntaxInfo
-    EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
+    name <- Unqualified <$> (identifier <|> parens operator)
+    instTypes <- option [] (angles (sepBy1 pType comma))
+    return (EVar synInfo () instTypes name)
+    -- EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
 
 pRecord :: Parser UntypedExpr
 pRecord = do
