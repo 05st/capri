@@ -6,6 +6,7 @@ Capri is a statically typed, general purpose programming language with an emphas
 
 The compiler currently targets only C. Everything in the language is subject to change. Major planned features such as polymorphism are also currently missing. Here is a list of so far implemented features:
 - Type inference with an extended Hindley-Milner type system
+- Parametric polymorphism
 - Records and variants (algebraic data types)
 - Module system (which will allow some sort of dynamic linking)
 - User-defined prefix, infix, and postfix operators with arbitrary precedences
@@ -13,8 +14,6 @@ The compiler currently targets only C. Everything in the language is subject to 
 - A small standard library
 
 Planned features:
-- Parametric polymorphism
-- Row polymorphism
 - Ad-hoc polymorphism (via typeclasses)
 - Optional garbage collector ([Boehm-Demers-Weiser garbage collector](https://en.wikipedia.org/wiki/Boehm_garbage_collector))
 - Closures
