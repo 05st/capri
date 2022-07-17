@@ -62,9 +62,10 @@ pFuncOperDecl isPub = do
     synInfo <- pSyntaxInfo
     isOper <- (True <$ symbol "op") <|> (False <$ symbol "fn")
     name <- if isOper then oper <$> pOperatorDef else identifier
+    tvars <- if isOper then return [] else option [] (angles (sepBy1 identifier comma))
     params <- pParams
     retAnnot <- optional pTypeAnnot
-    TLFunc synInfo () isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
+    TLFunc synInfo () (map TV tvars) isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
 
 pOperatorDef :: Parser OperatorDef
 pOperatorDef = do

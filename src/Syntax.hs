@@ -29,7 +29,7 @@ data Module a = Module
     } deriving (Show, Functor)
 
 data TopLvl a
-    = TLFunc SyntaxInfo a Bool Bool Name Params TypeAnnot (Expr a)
+    = TLFunc SyntaxInfo a [TVar] Bool Bool Name Params TypeAnnot (Expr a)
     | TLType SyntaxInfo Bool Name [TVar] Type
     deriving (Show, Functor)
     
@@ -98,11 +98,11 @@ getModFullName :: Module a -> [Text]
 getModFullName mod = modPath mod ++ [modName mod]
 
 topLvlToName :: TopLvl a -> Name
-topLvlToName (TLFunc _ _ _ _ name _ _ _) = name
+topLvlToName (TLFunc _ _ _ _ _ name _ _ _) = name
 topLvlToName (TLType _ _ name _ _) = name
 
 isTopLvlPub :: TopLvl a -> Bool
-isTopLvlPub (TLFunc _ _ isPub _ _ _ _ _) = isPub
+isTopLvlPub (TLFunc _ _ _ isPub _ _ _ _ _) = isPub
 isTopLvlPub (TLType _ isPub _ _ _) = isPub
 
 exprType :: TypedExpr -> Type

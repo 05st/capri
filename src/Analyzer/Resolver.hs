@@ -55,9 +55,9 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         typeAliasEntry _ _ = []
         -- ^ contains all of the top level declarations of each module, this is so mutual recursion works
         
-        fullNameHelper mod (TLFunc _ _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
+        fullNameHelper mod (TLFunc _ _ _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
         fullNameHelper mod (TLType _ _ (Unqualified name) _ _) = [Qualified (getModFullName mod) name]
-        fullNameHelper _ (TLFunc _ _ _ _ name _ _ _) = [name]
+        fullNameHelper _ (TLFunc _ _ _ _ _ name _ _ _) = [name]
         fullNameHelper _ (TLType _ _ name _ _) = [name]
 
 resolveModule :: UntypedModule -> Resolve UntypedModule
@@ -69,7 +69,7 @@ resolveModule mod = do
 
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
-    TLFunc info () isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
+    TLFunc info () tvars isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
         fullName <- topLvlDefinition info unqual
         typeAnnot' <- resolveTypeAnnot info typeAnnot
 
@@ -78,7 +78,7 @@ resolveTopLvl = \case
             pnames' <- traverse (insertNameToSet . extractName) pnames
             pannots' <- traverse (resolveTypeAnnot info) pannots
             expr' <- resolveExpr expr
-            return (TLFunc info () isPub isOper fullName (zip pnames' pannots') typeAnnot' expr'))
+            return (TLFunc info () tvars isPub isOper fullName (zip pnames' pannots') typeAnnot' expr'))
 
     TLType info isPub name@(Unqualified unqual) tvars typ -> do
         name' <- topLvlDefinition info unqual
@@ -184,6 +184,8 @@ resolveBranch (PLit lit, expr) = do
     (PLit lit, ) <$> resolveExpr expr
 resolveBranch _ = undefined
 
+newtype Asd = Asd Asd
+
 runResolveBranch branch = do
     tscope <- tmpScope
     local (++ [tscope]) (resolveBranch branch)
@@ -201,7 +203,11 @@ resolveType info = \case
     TApp typ typs -> TApp <$> resolveType info typ <*> traverse (resolveType info) typs
     TArrow typs typ -> TArrow <$> traverse (resolveType info) typs <*> resolveType info typ
     TPtr typ -> TPtr <$> resolveType info typ
-    other -> return other -- Handle some other types
+    tv@TVar {} -> return tv
+    TRecord row -> TRecord <$> resolveType info row
+    TVariant row -> TVariant <$> resolveType info row
+    TRowEmpty -> return TRowEmpty
+    TRowExtend label fieldType rest -> TRowExtend label <$> resolveType info fieldType <*> resolveType info rest
     where
         baseTypes =
             ["i8", "i16", "i32", "i64",

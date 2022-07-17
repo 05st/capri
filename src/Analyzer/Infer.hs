@@ -6,7 +6,7 @@ module Analyzer.Infer where
 
 import Data.Maybe
 import Data.Text (Text, pack, unpack)
-import Data.Data
+import Data.List
 import Data.Generics.Uniplate.Data
 import Data.Functor.Identity
 import qualified Data.Map as M
@@ -50,7 +50,7 @@ inferProgram prog =
 preInference :: UntypedProgram -> Infer ()
 preInference prog = mapM_ initializeTopLvl (concatMap modTopLvls prog)
     where
-        initializeTopLvl (TLFunc _ _ _ _ name _ _ _) = do
+        initializeTopLvl (TLFunc _ _ _ _ _ name _ _ _) = do
             typeVar <- fresh
             state <- get
             env <- gets preTopLvlEnv
@@ -76,11 +76,13 @@ inferModule (Module info name path imports externs topLvls) = do
 
 inferTopLvl :: UntypedTopLvl -> Infer TypedTopLvl
 inferTopLvl = \case
-    TLFunc info _ isPub isOper name params annot body -> do
+    TLFunc info _ tvars isPub isOper name params annot body -> do
         alreadyDefined <- exists name
         when alreadyDefined (throwError (RedefinitionError (syntaxInfoSourcePos info) (show name)))
         (body', typ) <- inferFn (syntaxInfoSourcePos info) name params annot body
-        return (TLFunc info typ isPub isOper name params annot body')
+        let tvsList = S.toList (tvs typ)
+        when (tvsList /= tvars) (throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Free type variables not closed over " ++ show (tvsList \\ tvars) ++ ", check the type parameter list or try adding more type annotations")))
+        return (TLFunc info typ tvars isPub isOper name params annot body')
     TLType info isPub name typeParams mainTyp -> return (TLType info isPub name typeParams mainTyp)
 
 inferFn :: SourcePos -> Name -> Params -> TypeAnnot -> UntypedExpr -> Infer (TypedExpr, Type)

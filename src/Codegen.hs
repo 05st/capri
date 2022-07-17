@@ -108,8 +108,7 @@ genPolyRequest ((name, typs), id) = do
     baseMap <- gets _polyBaseMap
     case M.lookup name baseMap of
         Nothing -> undefined
-        Just (TLFunc _ typ@(TArrow ptypes rtype) _ _ _ paramsWithAnnots _ body) -> do
-            let tvars = S.toList (tvs typ)
+        Just (TLFunc _ (TArrow ptypes rtype) tvars _ _ _ paramsWithAnnots _ body) -> do
             let subst = M.fromList (zip tvars typs)
             genFunction (apply subst ptypes) (apply subst rtype) ("_poly_" <> fromString (show id)) (map fst paramsWithAnnots) body
             flushTo output
@@ -117,8 +116,7 @@ genPolyRequest ((name, typs), id) = do
 
 genTopLvl :: TypedTopLvl -> Gen ()
 genTopLvl = \case
-    tl@(TLFunc info typ@(TArrow ptypes rtype) _ isOper name paramsWithAnnots _ body) -> do
-        let tvars = tvs typ
+    tl@(TLFunc _ (TArrow ptypes rtype) tvars _ _ name paramsWithAnnots _ body) -> do
         let isPoly = not (null tvars)
         if isPoly
             then do -- Add to polybasemap
