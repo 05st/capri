@@ -153,7 +153,7 @@ inferExpr = \case
     ELit info _ lit -> return (ELit info (inferLit lit) lit)
 
     EVar info _ instTypes name -> do
-        typ <- lookupType info name
+        typ <- lookupType info name instTypes
         case S.toList (tvs instTypes) of
             [] -> return (EVar info typ instTypes name)
             tvars -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Cannot instantiate type paramater(s) with type variable(s) " ++ show tvars))
@@ -215,7 +215,7 @@ inferExpr = \case
         let at = exprType a'
         let bt = exprType b'
 
-        optype <- lookupType info oper
+        optype <- lookupType info oper []
         rt <- fresh
         let ft = TArrow [at, bt] rt
         constrain (Constraint (syntaxInfoSourcePos info) optype ft)
@@ -225,7 +225,7 @@ inferExpr = \case
         a' <- inferExpr expr
         let at = exprType a'
         
-        optype <- lookupType info oper
+        optype <- lookupType info oper []
         rt <- fresh
         constrain (Constraint (syntaxInfoSourcePos info) optype (TArrow [at] rt))
         return (EUnaOp info rt oper a')
@@ -336,19 +336,22 @@ generalize env typ = Forall (S.toList vs) typ
     where
         vs = tvs typ `S.difference` tvs (M.elems env)
 
-instantiate :: PolyType -> Infer Type
-instantiate (Forall vs typ) = do
-    nvs <- traverse (const fresh) vs
+instantiate :: PolyType -> [Type] -> Infer Type
+instantiate (Forall vs typ) instTypes = do
+    nvs <- 
+        case instTypes of
+            [] -> traverse (const fresh) vs
+            _ -> return instTypes
     let sub = M.fromList (zip vs nvs)
     return (apply sub typ)
 
-lookupVar :: SyntaxInfo -> Name -> Infer (Type, Bool)
-lookupVar info name = do
+lookupVar :: SyntaxInfo -> Name -> [Type] -> Infer (Type, Bool)
+lookupVar info name instTypes = do
     env <- gets environment
     mutEnv <- gets isMutEnv
     let mut = fromMaybe False (M.lookup name mutEnv)
     case M.lookup name env of
-        Just typ -> (,mut) <$> instantiate typ
+        Just typ -> (,mut) <$> instantiate typ instTypes
         Nothing -> do
             preEnv <- gets preTopLvlEnv
             case M.lookup name preEnv of
@@ -356,11 +359,11 @@ lookupVar info name = do
                 Nothing -> throwError (UndefinedError (syntaxInfoSourcePos info) (show name))
 
 
-lookupType :: SyntaxInfo -> Name -> Infer Type
-lookupType info name = fst <$> lookupVar info name
+lookupType :: SyntaxInfo -> Name -> [Type] -> Infer Type
+lookupType info name instTypes = fst <$> lookupVar info name instTypes
             
 lookupMut :: SyntaxInfo -> Name -> Infer Bool
-lookupMut info name = snd <$> lookupVar info name
+lookupMut info name = snd <$> lookupVar info name []
 
 exists :: Name -> Infer Bool
 exists name = gets ((isJust . M.lookup name) . environment) -- Doesn't check temp env for top levels

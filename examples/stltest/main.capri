@@ -2,16 +2,8 @@ module main;
 
 import io;
 
-// type LinkedListInt = <empty: unit, cons: {elem: i64, next: LinkedListInt}>;
-
-fn id<a, b>(x: a, b: i64, d: b) x;
-
-fn rowPolymorphic<r>(rec: {text: str | r}): str
-    rec.text;
+fn id<a>(x: a) x;
 
 fn main() {
-    // let testList: LinkedListInt = <empty = ()>;
-
-    print(id<str, char>(rowPolymorphic<{num: i64}>({text = "hello", num = 23}, 0, 'l')));
-    print(id<str, bool>("test", 123, false));
-};
+    print(id<str>("test"));
+}
