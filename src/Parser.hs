@@ -48,24 +48,26 @@ pModule modPath = do
         pExtern = do
             symbol "extern"
             name <- identifier
+            paramTypes <- parens (sepBy pBaseType comma)
             symbol ":"
-            (name,) <$> (pType <* semi)
+            retType <- pType
+            semi
+            return (name, paramTypes, retType)
 
 -- Top Level Declarations
 pTopLvlDecl :: Parser UntypedTopLvl
 pTopLvlDecl = do
     isPub <- option False (True <$ symbol "pub")
-    pFuncOperDecl isPub <|> pTypeAliasDecl isPub
+    pFuncOperDecl isPub <|> pTypeAliasDecl isPub <|> pEnumDecl isPub
 
 pFuncOperDecl :: Bool -> Parser UntypedTopLvl
 pFuncOperDecl isPub = do
     synInfo <- pSyntaxInfo
     isOper <- (True <$ symbol "op") <|> (False <$ symbol "fn")
     name <- if isOper then oper <$> pOperatorDef else identifier
-    tvars <- if isOper then return [] else option [] (angles (sepBy1 identifier comma))
     params <- pParams
     retAnnot <- optional pTypeAnnot
-    TLFunc synInfo () (map TV tvars) isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
+    TLFunc synInfo () isPub isOper (Unqualified name) params retAnnot <$> (pExpression <* semi)
 
 pOperatorDef :: Parser OperatorDef
 pOperatorDef = do
@@ -84,6 +86,21 @@ pTypeAliasDecl isPub = do
     params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
     symbol "="
     TLType synInfo isPub (Unqualified name) params <$> (pType <* semi)
+
+pEnumDecl :: Bool -> Parser UntypedTopLvl
+pEnumDecl isPub = do
+    synInfo <- pSyntaxInfo
+    symbol "enum"
+    name <- typeIdentifier
+    params <- option [] (angles (sepBy1 (TV <$> identifier) comma))
+    symbol "="
+    variants <- angles (sepBy1 pEnumVariant comma) <* semi
+    return (TLEnum synInfo isPub (Unqualified name) params variants)
+    where
+        pEnumVariant = do
+            label <- identifier
+            typeWraps <- option [] (parens (sepBy1 pType comma))
+            return (label, typeWraps)
 
 -- Declarations
 pDecl :: Parser UntypedDecl
@@ -173,7 +190,15 @@ pAssign = do
     lhs <- pRecordSelect
     option lhs (do
         symbol "="
-        EAssign synInfo () lhs <$> pExpression)
+        rhs <- pExpression
+
+        -- Desugar <record>.<label> = <expr>
+        -- into    <record> = {<label> = <expr> | {<record> - <label>}}
+        return $
+            case lhs of
+                ERecordSelect info _ recordExpr label ->
+                    EAssign synInfo () recordExpr (ERecordExtend info () rhs label (ERecordRestrict info () recordExpr label))
+                _ -> EAssign synInfo () lhs rhs)
 
 pRecordSelect :: Parser UntypedExpr
 pRecordSelect = do
@@ -210,10 +235,7 @@ pLiteralExpr = do
 pVariable :: Parser UntypedExpr
 pVariable = do
     synInfo <- pSyntaxInfo
-    name <- Unqualified <$> (identifier <|> parens operator)
-    instTypes <- option [] (angles (sepBy1 pType comma))
-    return (EVar synInfo () instTypes name)
-    -- EVar synInfo () [] . Unqualified <$> (identifier <|> parens operator)
+    EVar synInfo () . Unqualified <$> (identifier <|> parens operator)
 
 pRecord :: Parser UntypedExpr
 pRecord = do
@@ -234,8 +256,11 @@ pRecordRestrict = do
 pVariant :: Parser UntypedExpr
 pVariant = do
     synInfo <- pSyntaxInfo
-    (label, expr) <- angles ((,) <$> (identifier <* symbol "=") <*> pExpression)
-    return (EVariant synInfo () expr label)
+    enumName <- Unqualified <$> typeIdentifier
+    symbol "::"
+    variantLabel <- identifier
+    exprs <- option [] (parens (sepBy1 pExpression comma))
+    return (EVariant synInfo () enumName variantLabel exprs)
 
 pBlock :: Parser UntypedExpr
 pBlock = braces (do
@@ -257,7 +282,7 @@ integer = try octal <|> try binary <|> try hexadecimal <|> signed decimal
 
 -- Types
 pType :: Parser Type
-pType = try pArrowType <|> pRecordType <|> pVariantType <|> pTypePtr <?> "type"
+pType = try pArrowType <|> pRecordType <|> pTypePtr <?> "type"
 
 pArrowType :: Parser Type
 pArrowType = do
@@ -266,18 +291,12 @@ pArrowType = do
     TArrow paramTypes <$> pType
 
 pRecordType :: Parser Type
-pRecordType = braces (TRecord <$> pRowType)
-
-pVariantType :: Parser Type
-pVariantType = angles (TVariant <$> pRowType)
-
-pRowType :: Parser Type
-pRowType = option TRowEmpty rowExtend
+pRecordType = braces (option TRecordEmpty rowExtend)
     where
         rowExtend = do
             rowsParsed <- sepBy1 row comma
-            let rowExtends = map (uncurry TRowExtend) rowsParsed
-            extended <- option TRowEmpty (symbol "|" *> (try pVarType <|> pRowType))
+            let rowExtends = map (uncurry TRecordExtend) rowsParsed
+            extended <- option TRecordEmpty (symbol "|" *> pRecordType <|> TConst . Unqualified <$> typeIdentifier)
 
             pure (foldr ($) extended rowExtends)
         row = (,) <$> identifier <*> (colon *> pType)
@@ -303,18 +322,25 @@ pVarType :: Parser Type
 pVarType = TVar . TV <$> identifier
 
 pConstType :: Parser Type
-pConstType = TConst <$> (userDefined <|> primitive)
+pConstType = userDefined <|> pPrimType
     where
-        userDefined = Unqualified <$> typeIdentifier
-        primitive = choice $ map (\s -> Unqualified s <$ symbol s)
-            ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "str", "bool", "unit"]
+        userDefined = TConst . Unqualified <$> typeIdentifier
+
+pPrimType :: Parser Type
+pPrimType = TConst <$> choice (map (\s -> Unqualified s <$ symbol s)
+    ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f16", "f32", "f64", "char", "str", "bool", "unit"]) <?> "Primitive type"
 
 -- Patterns
 pPattern :: Parser Pattern
 pPattern = parens pPattern <|> try pVariantPattern <|> pWildPattern <|> pVarPattern <|> pLitPattern
 
 pVariantPattern :: Parser Pattern
-pVariantPattern = PVariant <$> identifier <*> (Unqualified <$> identifier) -- No nested patterns for now      <*> pPattern
+pVariantPattern = do
+    enumName <- Unqualified <$> typeIdentifier
+    symbol "::"
+    variantLabel <- identifier
+    varNames <- option [] (parens (sepBy1 (Unqualified <$> identifier) comma))
+    return (PVariant enumName variantLabel varNames) -- No nested patterns for now
 
 pWildPattern :: Parser Pattern
 pWildPattern = PWild <$ symbol "_"
@@ -336,14 +362,14 @@ pTypeAnnot :: Parser Type
 pTypeAnnot = colon *> pType
 
 -- Run
-parse :: FilePath -> [(FilePath, Text)] -> FilePath -> [(FilePath, Text)] -> Either String UntypedProgram
-parse rootDir files stlRootDir stlFiles = do
+parse :: FilePath -> [(FilePath, Text)] -> [(FilePath, Text)] -> Either String UntypedProgram
+parse rootDir files stlFiles = do
     let opdefs = concat (concat (traverse (uncurry (runParser (runReaderT pModuleOpDefs []))) (stlFiles ++ files)))
 
     -- Yeah I know this code is quite a monstrosity
     let (filePaths, contents) = unzip files
     let parseFiles = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath rootDir filePath)) opdefs) filePath content) files
-    let parseStl = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath stlRootDir filePath)) opdefs) filePath content) stlFiles
+    let parseStl = map (\(filePath, content) -> runParser (runReaderT (pModule (getModPath "" filePath)) opdefs) filePath content) stlFiles
 
     left errorBundlePretty (sequence (parseStl ++ parseFiles))
     where

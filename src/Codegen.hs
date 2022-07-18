@@ -1,471 +1,461 @@
-{-# Language LambdaCase #-}
-{-# Language OverloadedStrings #-}
-{-# Language TemplateHaskell #-}
+{-# Language TupleSections #-}
 {-# Language FlexibleContexts #-}
+{-# Language LambdaCase #-}
+{-# Language RecursiveDo #-}
+{-# Language OverloadedStrings #-}
+{-# Language MultiParamTypeClasses #-}
 
 module Codegen where
 
-import Data.Text (Text, unpack, pack)
-import Data.Char
-import qualified Data.Text as T
-import Data.Text.Lazy.Builder
-import qualified Data.Text.Lazy.IO as TIO
-import qualified Data.Map as M
-import qualified Data.Set as S
-import Data.List
+import qualified LLVM.AST.IntegerPredicate as IP
+import qualified LLVM.AST.FloatingPointPredicate as FP
 
-import Control.Monad.Except
+import LLVM.AST (Operand)
+import qualified LLVM.AST as AST
+import qualified LLVM.AST.Type as AST
+import qualified LLVM.AST.Constant as Const
+import qualified LLVM.AST.Name as AST
+import LLVM.AST.Typed
+
+import qualified LLVM.IRBuilder.Module as L
+import qualified LLVM.IRBuilder.Monad as L
+import qualified LLVM.IRBuilder.Instruction as L
+import qualified LLVM.IRBuilder.Constant as L
+import LLVM.Prelude (ShortByteString)
+
+import Data.String.Conversions
+import qualified Data.Map as M
+import qualified Data.Text as T
+import Data.Text (Text)
+import Data.List
+import Data.String
+import Data.Word
+
 import Control.Monad.State
 
-import Control.Lens
-
-import System.IO.Temp
-
 import Syntax
-import SyntaxInfo 
-import Name
 import Type
-
-import Analyzer.Substitution
-
-import Text.Megaparsec.Pos (SourcePos, sourcePosPretty)
+import Name
 
 import Debug.Trace
 
-type Gen = ExceptT Text (State GenState)
-data GenState = GenState
-    { _output :: Builder
-    , _buffer :: Builder
-    , _typedefs :: Builder
-    , _tmpVarCount :: Int
-    , _structUnionMap :: M.Map Type Int
-    , _structUnionCount :: Int
-    , _polyRequests :: M.Map (Name, [Type]) Int
-    , _polyCount :: Int
-    , _polyBaseMap :: M.Map Name TypedTopLvl
-    }
+instance ConvertibleStrings Text ShortByteString where
+    convertString = fromString . T.unpack
 
-makeLenses ''GenState
+data GenEnv = GenEnv
+    { operands :: M.Map Name Operand
+    , strings :: M.Map Text Operand
+    , enumMap :: M.Map Name (Int, AST.Type)
+    , variantMap :: M.Map (Name, Text) (Int, AST.Type)
+    } deriving (Eq, Show)
 
-capriHeaders :: Builder
-capriHeaders = "#include <stdio.h>\n#include <stdint.h>\n#include <stdbool.h>\ntypedef char unit;\n"
+registerOperand :: MonadState GenEnv m => Name -> Operand -> m ()
+registerOperand name op =
+    modify $ \env -> env { operands = M.insert name op (operands env) }
 
-capriEntryPoint :: Builder
-capriEntryPoint = "int main() {\n\tmain__main();\n\treturn 0;\n}\n"
+registerString :: MonadState GenEnv m => Text -> Operand -> m ()
+registerString str op =
+    modify $ \env -> env { strings = M.insert str op (strings env) }
 
-generate :: TypedProgram -> IO [FilePath]
+registerEnum :: MonadState GenEnv m => Name -> Int -> AST.Type -> m ()
+registerEnum name size enumType = 
+    modify $ \env -> env { enumMap = M.insert name (size, enumType) (enumMap env) }
+
+registerVariant :: MonadState GenEnv m => Name -> Text -> Int -> AST.Type -> m ()
+registerVariant enumName variantLabel tag variantType = 
+    modify $ \env -> env { variantMap = M.insert (enumName, variantLabel) (tag, variantType) (variantMap env) }
+
+type LLVM = L.ModuleBuilderT (State GenEnv)
+type Gen = L.IRBuilderT LLVM
+
+generate :: TypedProgram -> AST.Module
 generate prog =
-    case evalState (runExceptT (genProgram prog)) defaultGenState of
-        Left err -> [] <$ print err
-        Right (mods, polys) -> do
-            files <- traverse (const (emptySystemTempFile "capri.c")) mods
-            sequence_ [TIO.writeFile file (toLazyText (capriHeaders <> builder)) | (file, builder) <- zip files mods]
-            
-            entryPointFile <- emptySystemTempFile "capri.c"
-            TIO.writeFile entryPointFile (toLazyText capriEntryPoint)
+    flip evalState (GenEnv { operands = M.empty, strings = M.empty, enumMap = M.empty, variantMap = M.empty })
+        $ L.buildModuleT "capri"
+        $ do mapM_ genModule prog
 
-            polyFile <- emptySystemTempFile "capri.c"
-            TIO.writeFile polyFile (toLazyText (capriHeaders <> polys))
-
-            return (entryPointFile : polyFile : files)
-    where
-        defaultGenState = GenState mempty mempty mempty 0 mempty 0 mempty 0 mempty
-
-genProgram :: TypedProgram -> Gen ([Builder], Builder)
-genProgram prog = do
-    modBuilders <- traverse genModule prog
-
-    output .= mempty
-    buffer .= mempty
-    typedefs .= mempty
-
-    polyReqs <- gets _polyRequests
-    mapM_ genPolyRequest (M.toList polyReqs)
-    tdefs <- gets _typedefs
-    oput <- gets _output 
-    return (modBuilders, tdefs <> oput)
-
-genModule :: TypedModule -> Gen Builder
+genModule :: TypedModule -> LLVM ()
 genModule mod = do
-    output .= mempty
-    buffer .= mempty
-    typedefs .= mempty
-
-    write "// "
-    write $ mconcat (intersperse "::" (map fromText (modPath mod))) <> "::" <> fromText (modName mod) <> "\n"
-    flushTo output
-
+    let externs = modExterns mod
+    mapM_ declareExtern externs
     mapM_ genTopLvl (modTopLvls mod)
+    where
+        declareExtern (name, paramTypes, retType) = do
+            paramTypes' <- traverse convertType paramTypes
+            retType' <- convertType retType
+            op <- L.extern (textToLLVMName name) paramTypes' retType'
+            registerOperand (Unqualified name) op
 
-    _typedefs' <- gets _typedefs
-    _output' <- gets _output
-    output .= _typedefs' <> _output'
+genTopLvl :: TypedTopLvl -> LLVM ()
+genTopLvl (TLFunc _ t _ isOper name params _ body) = mdo
+    let (TArrow paramTypes retType) = t
+    registerOperand name function
+    (function, strs) <- (do
+        retType' <- convertType retType
+        params <- traverse mkParam (zip paramNames paramTypes)
+        func <- L.function funcName params retType' genBody
+        strings' <- gets strings
+        return (func, strings'))
+    modify (\e -> e { strings = strs })
+    where
+        (paramNames, _) = unzip params
+        funcName = AST.mkName (cs (convertName name))
+        mkParam (paramName, paramType) = (,) <$> convertType paramType <*> return (L.ParameterName (cs (convertName paramName)))
+        genBody ops = do
+            entry <- L.block `L.named` "entry"
+            forM_ (zip ops paramNames) $ \(op, name) -> do
+                addr <- L.alloca (typeOf op) Nothing 0
+                L.store addr 0 op
+                registerOperand name addr
+            genExpr body >>= L.ret
+            return ()
+genTopLvl TLType {} = return () -- nothing to compile for type aliases
+genTopLvl (TLEnum _ _ enumName typeParams variants) = do
+    largestVariantSize <- maximum <$> traverse getVariantSize variants
 
-    gets _output
+    let enumStructType = AST.StructureType False [AST.i8, AST.ArrayType (fromIntegral largestVariantSize) AST.i8]
+    enumType <- L.typedef (textToLLVMName . T.concat $ ["enum.", convertName enumName]) (Just enumStructType)
 
-genPolyRequest :: ((Name, [Type]), Int) -> Gen ()
-genPolyRequest ((name, typs), id) = do
-    baseMap <- gets _polyBaseMap
-    case M.lookup name baseMap of
-        Nothing -> undefined
-        Just (TLFunc _ (TArrow ptypes rtype) tvars _ _ _ paramsWithAnnots _ body) -> do
-            let subst = M.fromList (zip tvars typs)
-            genFunction (apply subst ptypes) (apply subst rtype) ("_poly_" <> fromString (show id)) (map fst paramsWithAnnots) body
-            flushTo output
-        _ -> error "not yet implemented"
+    registerEnum enumName (largestVariantSize + 1) enumType
 
-genTopLvl :: TypedTopLvl -> Gen ()
-genTopLvl = \case
-    tl@(TLFunc _ (TArrow ptypes rtype) tvars _ _ name paramsWithAnnots _ body) -> do
-        let isPoly = not (null tvars)
-        if isPoly
-            then do -- Add to polybasemap
-                state <- get
-                put (state { _polyBaseMap = M.insert name tl (_polyBaseMap state) })
-            else do
-                genFunction ptypes rtype (convertName name) (map fst paramsWithAnnots) body
+    mapM_ genVariantTypes (zip variants [0..]) -- Zip with the tags
+    where
+        getVariantSize (_, types) = sum <$> traverse sizeofType types
+        genVariantTypes ((label, types), tag) = do
+            types' <- traverse convertType types
+            let structType = AST.StructureType False (AST.i8 : types')
+            variantType <- L.typedef (textToLLVMName . T.concat $ ["enum.", convertName enumName, ".", label]) (Just structType)
 
-    TLType info _ name typeParams typ -> return ()
-    _ -> throwError "genTopLvl unhandled case"
-
-genFunction :: [Type] -> Type -> Builder -> [Name] -> TypedExpr -> Gen ()
-genFunction ptypes rtype nameBuilder params bodyExpr = do
-    ptypes' <- traverse convertType ptypes
-    rtype' <- convertType rtype
-
-    let paramsBuilder = mconcat (intersperse ", " $ [ptype <> " " <> convertName param | (param, ptype) <- zip params ptypes'])
-    let fnDeclBuilder = rtype' <> " " <> nameBuilder <> "(" <> paramsBuilder <> ")"
-
-    write (fnDeclBuilder <> " {\n")
-    flushTo output
-
-    write "return "
-    genExpr bodyExpr
-
-    write ";\n}\n"
-    flushTo output
-
-handlePolyRequest :: Name -> [Type] -> Gen Builder
-handlePolyRequest name typs = do
-    state <- get
-    case M.lookup (name, typs) (_polyRequests state) of
-        Just id -> return ("_poly_" <> fromString (show id))
-        Nothing -> do
-            count <- gets _polyCount
-            put (state { _polyRequests = M.insert (name, typs) count (_polyRequests state) })
-            polyCount += 1
-            return ("_poly_" <> fromString (show count))
+            registerVariant enumName label tag variantType
 
 genDecl :: TypedDecl -> Gen ()
-genDecl = \case
-    DVar info _ name _ expr -> do
-        etype <- convertType (exprType expr)
-        write $ etype <> " " <> convertName name <> " = "
-        genExpr expr
-        write ";\n"
-        flushTo output
-    DStmt s -> genStmt s
+genDecl (DVar _ _ name _ expr) = do
+    typ <- convertType (exprType expr)
+    addr <- L.alloca typ Nothing 0
+
+    expr' <- genExpr expr
+    L.store addr 0 expr'
+
+    registerOperand name addr
+
+genDecl (DStmt stmt) = genStmt stmt
 
 genStmt :: TypedStmt -> Gen ()
-genStmt = \case
-    SRet expr -> do
-        write "return "
-        genExpr expr
-        write ";\n"
-        flushTo output
-    SWhile info cond body -> do
-        write "while ("
-        genExpr cond
-        write ") {\n"
-        flushTo output
-        genExpr body
-        write ";\n"
-        write "}\n"
-        flushTo output
-    SExpr expr -> do
-        genExpr expr
-        write ";\n"
-        flushTo output
+genStmt (SExpr expr) = () <$ genExpr expr
+genStmt (SRet expr) = genExpr expr >>= L.ret
+genStmt (SWhile _ cond body) = mdo
+    L.br whileBlock
 
-genExpr :: TypedExpr -> Gen ()
-genExpr = \case
-    ELit _ _ lit -> write (genLit lit)
-    EVar _ _ [] name -> write (convertName name)
-    EVar _ _ typs name -> do
-        toWrite <- handlePolyRequest name typs
-        write toWrite
-    EAssign _ _ l r -> do
-        genExpr l
-        write " = "
-        genExpr r
-    EBlock _ _ decls res -> do
-        curr <- collectBuffer
-        flushTo output
-        mapM_ genDecl decls
-        flushTo output
-        write curr
-        genExpr res
-    EIf _ t cond a b -> do
-        curr <- collectBuffer
-        var <- tmpVar
-        ttype <- convertType t
-        write (ttype <> " " <> var <> ";\n")
-        write "if ("
-        genExpr cond
-        write ") {\n"
-        flushTo output
-        write (var <> " = ")
-        genExpr a
-        write ";\n} else {\n"
-        flushTo output
-        write (var <> " = ")
-        genExpr b
-        write ";\n}\n"
-        write (curr <> var)
-    EMatch synInfo t mexpr branches -> do
-        curr <- collectBuffer
-        var <- tmpVar
-        rvar <- tmpVar
-        ttype <- convertType t
-        let mexprType = exprType mexpr
-        mexprTypeTxt <- convertType mexprType
+    whileBlock <- L.block `L.named` "while"
+    continue <- genExpr cond
+    mkTerminator (L.condBr continue whileBlock mergeBlock)
+    genExpr body
 
-        write (ttype <> " " <> rvar <> ";\n")
-        write (mexprTypeTxt <> " " <> var <> " = ")
-        genExpr mexpr
-        write ";\n"
+    mergeBlock <- L.block `L.named` "merge"
+    return ()
 
-        mapM_ (genMatchBranch rvar var mexprType) branches
+genLVal :: TypedExpr -> Gen Operand
+genLVal (EVar _ _ name) = gets ((M.! name) . operands)
+genLVal (ERecordSelect _ _ recordExpr label) = genRecordSelect recordExpr label
+genLVal _ = error "Called genLVal on non-lvalue"
 
-        -- Panic for non-exhaustive match expressions
-        write ("{\nprintf(\"%s\", \"PANIC: Non-exhaustive match expression ("
-            <> (fromString . filter (/= '"') . show) (sourcePosPretty (syntaxInfoSourcePos synInfo))
-            <> ")\");\nexit(-1);\n}\n")
-        write (curr <> rvar)
-    EBinOp _ _ oper a b -> do
-        write (convertName oper <> "(")
-        genExpr a
-        write ", "
-        genExpr b
-        write ")"
-    EUnaOp _ _ oper expr -> do
-        write (convertName oper <> "(")
-        genExpr expr
-        write ")"
-    EClosure {} -> throwError "no closures yet"
-    ECall _ _ fn args -> do
-        genExpr fn
-        write "("
-        sequence_ (intersperse (write ", ") (map genExpr args))
-        write ")"
-    ECast _ targ expr -> do
-        targtype <- convertType targ
-        write ("(" <> targtype <> ")")
-        genExpr expr
-    ERecordEmpty _ _ -> write "{}"
-    ERecordSelect _ _ record label -> do
-        write "("
-        genExpr record
-        write ")."
-        write (fromText label)
-    r@(ERecordExtend _ _ expr label rest) -> do
-        curr <- collectBuffer
-        rtype <- convertType (exprType r)
-        tvar <- tmpVar
-        typ <- convertType (exprType r)
-        write (typ <> " " <> tvar <> ";\n")
+genExpr :: TypedExpr -> Gen Operand
+genExpr (ELit _ _ lit) = genLit lit
+genExpr (EVar _ _ name) = do
+    addr <- gets ((M.! name) . operands)
+    L.load addr 0
+genExpr (EAssign _ _ lhs rhs) = do
+    lhs' <- genLVal lhs
+    rhs' <- genExpr rhs
+    L.store lhs' 0 rhs'
+    return rhs'
+genExpr (EBlock _ _ decls expr) = do
+    mapM_ genDecl decls
+    genExpr expr
+genExpr (EIf _ _ cond a b) = mdo
+    bool <- genExpr cond
+    L.condBr bool thenBlock elseBlock
 
-        let exprLabels = handleRecord r []
-        sequence_ [write (tvar <> "." <> fromText label <> " = ") *> genExpr expr *> write ";\n" | (expr, label) <- exprLabels]
+    thenBlock <- L.block `L.named` "then"
+    true <- genExpr a
+    mkTerminator (L.br mergeBlock)
 
-        write (curr <> tvar)
-    EVariant _ t expr label -> do
-        vtype <- convertType t
-        write ("{." <> fromText label <> " = ")
-        genExpr expr
-        write (", ._type = " <> vtype <> fromText label <> "}")
-    ERecordRestrict _ _ expr _ -> do
-        genExpr expr
+    elseBlock <- L.block `L.named` "else"
+    false <- genExpr b
+    mkTerminator (L.br mergeBlock)
+
+    mergeBlock <- L.block `L.named` "merge"
+    L.phi [(true, thenBlock), (false, elseBlock)]
+
+-- todo: rewrite this disaster
+genExpr (EMatch _ _ mexpr branches) = mdo
+    mexpr' <- genExpr mexpr
+
+    (firstBlock, phis) <- genBranches mexpr' mergeBlock branches
+
+    mergeBlock <- L.block `L.named` "merge"
+    L.phi phis
+
     where
-        handleRecord var@(EVar info _ _ name) c =
-            case exprType var of
-                TRecord row -> let labels = getRowsLabels row in [(ERecordSelect info TUnit var label, label) | label <- labels] ++ c
-                _ -> error "Attempt to extend non-record (?)"
-        handleRecord (ERecordEmpty _ _) [] = []
-        handleRecord (ERecordEmpty _ _) collected = collected
-        handleRecord (ERecordExtend _ _ expr label rest) collected = handleRecord rest ((expr, label):collected)
-        handleRecord (ERecordRestrict _ _ expr label) collected = handleRecord expr collected
-        handleRecord _ collected = collected
+        genBranches _ _ [] = error "Empty match expression (semant error)"
+        genBranches e m [(pat, expr)] = mdo
+            cond <- genPatternCond pat e
+            L.condBr cond block m -- TODO: PANIC ON NONEXHAUSTIVE MATCH EXPRESSION
 
-        getRowsLabels TRowEmpty = []
-        getRowsLabels (TRowExtend label _ next) = label : getRowsLabels next
-        getRowsLabels _ = undefined
+            block <- L.block `L.named` "branch"
 
-genMatchBranch :: Builder -> Builder -> Type -> (Pattern, TypedExpr) -> Gen ()
-genMatchBranch rvar var typ (pat, expr) = do
-    case pat of
-        PVariant label name -> do
-            typTxt <- convertType typ
-            write ("if (" <> var <> "._type == " <> typTxt <> fromText label <> ") {\n")
-            
-            labelTypeTxt <- getTypeOfLabel label typ >>= convertType
-            write (labelTypeTxt <> " " <> convertName name <> " = " <> var <> "." <> fromText label <> ";\n")
+            case pat of
+                (PVariant enumName label vars) -> do
+                    mapM_ (\(var, index) -> do
+                        (_, enumType) <- gets ((M.! enumName) . enumMap)
+                        (tag, variantType) <- gets ((M.! (enumName, label)) . variantMap)
 
-            write (rvar <> " = ")
-            genExpr expr
-            write ";\n} else "
-        PLit lit -> do
-            write ("if (" <> var <> " == " <> genLit lit <> ") {\n")
-            write (rvar <> " = ")
-            genExpr expr
-            write ";\n} else "
-        PVar name -> do
-            typTxt <- convertType typ
-            write "if (true) {\n"
+                        enumAddr <- L.alloca enumType Nothing 0
+                        L.store enumAddr 0 e
 
-            write (typTxt <> " " <> convertName name <> " = " <> var <> ";\n")
+                        cast <- L.bitcast enumAddr (AST.ptr variantType)
+                        fieldAddr <- L.gep cast [L.int32 0, L.int32 (fromIntegral index)]
+                        registerOperand var fieldAddr
+                        ) (zip vars [1..])
+                    expr' <- genExpr expr
+                    mkTerminator (L.br m)
+                (PVar name) -> do
+                    registerOperand name e
+                _ -> return ()
 
-            write (rvar <> " = ")
-            genExpr expr
-            write ";\n} else "
-        PWild -> do
-            write "if (true) {\n"
-            write (rvar <> " = ")
-            genExpr expr
-            write ";\n} else "
+            expr' <- genExpr expr
+            mkTerminator (L.br m)
+
+            return (block, [(expr', block)])
+
+        genBranches e m ((pat, expr) : rest) = mdo
+            cond <- genPatternCond pat e
+            L.condBr cond block nextBlock
+
+            block <- L.block `L.named` "branch"
+
+            case pat of
+                (PVariant enumName label vars) -> do
+                    mapM_ (\(var, index) -> do
+                        (_, enumType) <- gets ((M.! enumName) . enumMap)
+                        (tag, variantType) <- gets ((M.! (enumName, label)) . variantMap)
+
+                        enumAddr <- L.alloca enumType Nothing 0
+                        L.store enumAddr 0 e
+
+                        cast <- L.bitcast enumAddr (AST.ptr variantType)
+                        fieldAddr <- L.gep cast [L.int32 0, L.int32 (fromIntegral index)]
+                        registerOperand var fieldAddr
+                        ) (zip vars [1..])
+                    expr' <- genExpr expr
+                    mkTerminator (L.br m)
+                (PVar name) -> do
+                    registerOperand name e
+                _ -> return ()
+
+            expr' <- genExpr expr
+            mkTerminator (L.br m)
+
+            (nextBlock, phis) <- genBranches e m rest
+
+            return (block, (expr', block) : phis)
+        
+        genPatternCond (PLit lit) llvmExpr = do
+            lit' <- genLit lit
+            case lit of
+                LInt _ -> L.icmp IP.EQ lit' llvmExpr
+                LFloat _ -> L.fcmp FP.OEQ lit' llvmExpr
+                LBool _ -> L.icmp IP.EQ lit' llvmExpr
+                LChar _ -> L.icmp IP.EQ lit' llvmExpr
+                LUnit -> L.icmp IP.EQ lit' llvmExpr -- Maybe just evaluate to true?
+                LString _ -> L.icmp IP.EQ lit' llvmExpr -- compare char pointers
+        genPatternCond (PVar var) llvmExpr = do
+            return (L.bit 1)
+        genPatternCond PWild _ = do
+            return (L.bit 1)
+        genPatternCond (PVariant enumName label vars) llvmExpr = do
+            (_, enumType) <- gets ((M.! enumName) . enumMap)
+            (tag, variantType) <- gets ((M.! (enumName, label)) . variantMap)
+
+            enumAddr <- L.alloca enumType Nothing 0
+            L.store enumAddr 0 llvmExpr
+
+            tagAddr <- L.gep enumAddr [L.int32 0, L.int32 0]
+            tagExpr <- L.load tagAddr 0
+            L.icmp IP.EQ tagExpr (L.int32 (fromIntegral tag))
+
+genExpr (EBinOp _ _ operName rhs lhs) = do
+    oper <- gets ((M.! operName) . operands)
+    rhs' <- genExpr rhs
+    lhs' <- genExpr lhs
+    L.call oper [(rhs', []), (lhs', [])]
+genExpr (EUnaOp _ _ operName expr) = do
+    oper <- gets ((M.! operName) . operands)
+    expr' <- genExpr expr
+    L.call oper [(expr', [])]
+genExpr EClosure {} = undefined -- TODO
+genExpr (ECall _ _ expr args) = do
+    args' <- traverse genExpr args
+    expr' <- genLVal expr
+    L.call expr' (map (,[]) args')
+genExpr (ECast _ target expr) = do
+    let initType = exprType expr
+    expr' <- genExpr expr
+    llvmTargetType <- convertType target
+    error "Casts not supported yet"
+genExpr (ERecordEmpty _ _) = do
+    emptyType <- convertType TRecordEmpty
+    addr <- L.alloca emptyType Nothing 0
+    L.load addr 0
+genExpr (ERecordSelect _ _ recordExpr label) = do
+    addr <- genRecordSelect recordExpr label
+    L.load addr 0
+genExpr (ERecordRestrict _ _ expr label) = undefined
+genExpr e@ERecordExtend {} = do
+    -- When compiling records, the code gen just allocates memory and then proceeds to
+    -- set every field. Using memcpy and constants would probably be a better idea.
+    let typ = exprType e
+    typ' <- convertType typ
+    addr <- L.alloca typ' Nothing 0
+
+    mapM_ (setField typ addr) (collectRecordExprFields e)
+    
+    L.load addr 0
     where
-        getTypeOfLabel label (TVariant row) = getTypeOfLabel label row
-        getTypeOfLabel label (TRowExtend l typ rest)
-            | l == label = return typ
-            | otherwise = getTypeOfLabel label rest
-        getTypeOfLabel label _ = error $ "getTypeOfLabel reached end (" ++ show label ++ ")"
+        setField typ addr (expr, label) = do
+            let index = computeRecordFieldIndex typ label
+            expr' <- genExpr expr
+            fieldAddr <- L.gep addr [L.int32 0, L.int32 index]
+            L.store fieldAddr 0 expr'
 
-genLit :: Lit -> Builder
-genLit = \case
-    LInt n -> (fromString . show) n
-    LFloat n -> (fromString . show) n
-    LString s -> (fromString . show . unpack) s
-    LChar c -> (fromString . show) c
-    LBool True -> "true"
-    LBool False -> "false"
-    LUnit -> "0"
+        collectRecordExprFields (ERecordExtend _ _ expr label next) = (expr, label) : collectRecordExprFields next
+        collectRecordExprFields _ = []
+genExpr (EVariant _ _ enumName variantLabel exprs) = do
+    (_, enumType) <- gets ((M.! enumName) . enumMap)
+    (tag, variantType) <- gets ((M.! (enumName, variantLabel)) . variantMap)
 
-{-
-handleOper :: Name -> Gen Builder
-handleOper name = do
-    map <- gets _operMap
-    id <- case M.lookup name map of
+    enumAddr <- L.alloca enumType Nothing 0
+
+    tagAddr <- L.gep enumAddr [L.int32 0, L.int32 0]
+    L.store tagAddr 0 (L.int8 (fromIntegral tag)) -- Store tag
+
+    cast <- L.bitcast enumAddr (AST.ptr variantType)
+
+    -- Store values (the order for enum variants should remain constant so we can just zip [1..] for indices)
+    -- index 0 is reserved for the tag
+    mapM_ (setField cast) (zip exprs [1..])
+
+    L.load enumAddr 0
+    where
+        setField enumAddr (expr, idx) = do
+            expr' <- genExpr expr
+            fieldAddr <- L.gep enumAddr [L.int32 0, L.int32 idx]
+            L.store fieldAddr 0 expr'
+
+genRecordSelect :: TypedExpr -> Text -> Gen Operand
+genRecordSelect recordExpr label = do
+    let recordType = exprType recordExpr
+    expr' <- genLVal recordExpr
+
+    let index = computeRecordFieldIndex recordType label
+    L.gep expr' [L.int32 0, L.int32 index]
+
+computeRecordFieldIndex :: Type -> Text -> Integer
+computeRecordFieldIndex record label = do
+    let (labels, _) = unzip (collectRecordTypeFieldsSorted record)
+    case elemIndex label labels of
+        Nothing -> error "computeRecordFieldIndex failed"
+        Just i -> fromIntegral i
+
+genLit :: Lit -> Gen Operand
+genLit (LInt n) = return (L.int64 (fromIntegral n))
+genLit (LFloat n) = return (L.double n)
+genLit (LString s) = do
+    strs <- gets strings
+    case M.lookup s strs of
         Nothing -> do
-            count <- gets _operCount
-            operMap .= M.insert name count map
-            operCount += 1
-            return count
-        Just id -> return id
-    return ("_op_" <> fromString (show id))
--}
-
-convertName :: Name -> Builder
-convertName name =
-    let converted = convertNameToString name in
-        (fromString . concat ) [txt | char <- converted, let txt = if isAlphaNum char || char == '_' then [char] else show (ord char)]
-    where
-        convertNameToString (Unqualified n) = T.unpack n
-        convertNameToString (Qualified ns n) = T.unpack (T.intercalate "__" (ns ++ [n]))
-
-{-
-convertName :: Name -> Builder
-convertName (Unqualified n) = fromText n
-convertName (Qualified ns n) = fromText (T.intercalate "__" (ns ++ [n]))
--}
-
-convertType :: Type -> Gen Builder
-convertType = \case
-    TInt8 -> return "int8_t"
-    TInt16 -> return "int16_t"
-    TInt32 -> return "int32_t"
-    TInt64 -> return "int64_t"
-    TUInt8 -> return "uint8_t"
-    TUInt16 -> return "uint16_t"
-    TUInt32 -> return "uint32_t"
-    TUInt64 -> return "uint64_t"
-    TFloat32 -> return "float"
-    TFloat64 -> return "double"
-    TString -> return "char*"
-    TChar -> return "char"
-    TBool -> return "bool"
-    TUnit -> return "unit"
-    TConst name -> return ("_t_" <> convertName name)
-    TVar (TV x) -> return (fromText x)
-    -- TODO: clean up the repeated code here
-    t@(TRecord row) -> do
-        stmap <- gets _structUnionMap
-        case M.lookup t stmap of
-            Just id -> return ("_record_" <> fromString (show id))
-            Nothing -> do
-                count <- gets _structUnionCount
-                structUnionMap .= M.insert t count stmap
-                structUnionCount += 1
-
-                let countBldr = fromString (show count)
-                def <- convertType row
-                typedefs <>= "typedef struct {char _dummy; " <> def <> "} _record_" <> countBldr <> ";\n"
-
-                return ("_record_" <> countBldr)
-    t@(TVariant row) -> do
-        stmap <- gets _structUnionMap
-        case M.lookup t stmap of
-            Just id -> return ("_variant_" <> fromString (show id))
-            Nothing -> do
-                count <- gets _structUnionCount
-                structUnionMap .= M.insert t count stmap
-                structUnionCount += 1
-
-                let countBldr = fromString (show count)
-                def <- convertType row
-                typedefs <>= "typedef struct {union {char _dummy; " <> def <> "}; int _type;} _variant_" <> countBldr <> ";\n"
-
-                typeIds <- genVariantTypeIds countBldr row 0 []
-                typedefs <>= typeIds
-
-                return ("_variant_" <> countBldr)
-    TRowEmpty -> return ""
-    TRowExtend label fieldType rest -> do
-        ftype <- convertType fieldType
-        rtype <-
-            case rest of
-                TRecord row -> convertType row
-                TVariant row -> convertType row
-                _ -> convertType rest
-        return (ftype <> " " <> fromText label <> ";" <> rtype)
-    TPtr t -> (<> "*") <$> convertType t
-    _ -> undefined
-    where
-        genVariantTypeIds _ TRowEmpty _ col = return (mconcat col)
-        genVariantTypeIds cnt (TRowExtend label _ rest) id col = do
-            genVariantTypeIds cnt rest (id + 1) (("const int _variant_" <> cnt <> fromText label <> " = " <> fromString (show id) <> ";\n") : col)
-        genVariantTypeIds _ _ _ _ = undefined
+            let name = AST.mkName (show (M.size strs) <> ".str")
+            op <- L.globalStringPtr (cs s) name
+            registerString s (AST.ConstantOperand op)
+            return (AST.ConstantOperand op)
+        Just op -> return op
+genLit (LChar c) = return (L.int8 (fromIntegral (fromEnum c)))
+genLit (LBool b) = return (L.bit (if b then 1 else 0))
+genLit LUnit = return (L.bit 0)
 
 -- Utility
-write :: Builder -> Gen ()
-write txt = do
-    buffer <>= txt
+mkTerminator :: Gen () -> Gen ()
+mkTerminator instr = do
+    check <- L.hasTerminator
+    unless check instr
 
-flushTo :: ASetter GenState GenState Builder Builder -> Gen ()
-flushTo l = do
-    toFlush <- gets _buffer
-    l <>= toFlush
-    buffer .= mempty
+-- Size of the type in bytes
+sizeofType :: MonadState GenEnv m => Type -> m Int
+sizeofType = \case
+    TInt8 -> return 1
+    TInt16 -> return 2
+    TInt32 -> return 4
+    TInt64 -> return 8
+    TUInt8 -> return 1
+    TUInt16 -> return 2
+    TUInt32 -> return 4
+    TUInt64 -> return 8
+    TFloat32 -> return 4
+    TFloat64 -> return 8
+    TChar -> return 1
+    TString -> return 8 -- TODO
+    TBool -> return 1
+    TUnit -> return 1
+    TPtr _ -> return 8
+    TConst n -> gets (fst . (M.! n) . enumMap) -- just assume its an enum type i guess
+    TVar _ -> undefined
+    TApp _ _ -> undefined
+    TArrow _ _ -> undefined
+    TRecordEmpty -> return 1
+    t@TRecordExtend {} -> do
+        let (_, fieldTypes) = unzip (collectRecordTypeFieldsSorted t)
+        sizes <- traverse sizeofType fieldTypes
+        return (sum sizes)
 
-collectBuffer :: Gen Builder
-collectBuffer = do
-    buf <- gets _buffer
-    buffer .= mempty
-    return buf
+-- Convert Capri types to LLVM types
+convertType :: MonadState GenEnv m => Type -> m AST.Type
+convertType = \case
+    TInt8 -> return AST.i8
+    TInt16 -> return AST.i16
+    TInt32 -> return AST.i32
+    TInt64 -> return AST.i64
+    TUInt8 -> return AST.i8
+    TUInt16 -> return AST.i16
+    TUInt32 -> return AST.i32
+    TUInt64 -> return AST.i64
+    TFloat32 -> return AST.float
+    TFloat64 -> return AST.double
+    TChar -> return AST.i8
+    TString -> return (AST.ptr AST.i8) -- TODO
+    TBool -> return AST.i1
+    TUnit -> return AST.i1
+    TPtr t -> AST.ptr <$> convertType t
+    TConst n -> gets (snd . (M.! n) . enumMap) -- and assume its an enum type here as well i guess
+    TVar _ -> undefined
+    TApp _ _ -> undefined
+    TArrow paramTypes retType -> do
+        paramTypes' <- traverse convertType paramTypes
+        retType' <- convertType retType
+        return (AST.FunctionType retType' paramTypes' False)
+    TRecordEmpty -> return (AST.StructureType False [])
+    t@TRecordExtend {} -> do
+        let (fieldLabels, fieldTypes) = unzip (collectRecordTypeFieldsSorted t)
 
-tmpVar :: Gen Builder
-tmpVar = do
-    count <- gets _tmpVarCount
-    tmpVarCount += 1
-    return (fromText . pack $ names !! count)
-    where
-        names = map ('_' :) $ [1..] >>= flip replicateM ['a'..'z']
+        fieldTypes' <- traverse convertType fieldTypes
+        return (AST.StructureType False fieldTypes')
+
+convertName :: Name -> Text
+convertName (Unqualified unqual) = unqual
+convertName (Qualified quals last) = T.intercalate "__" (quals ++ [last])
+
+textToLLVMName :: Text -> AST.Name
+textToLLVMName = AST.mkName . cs
+
+-- Sort them so they have an ordering
+collectRecordTypeFieldsSorted :: Type -> [(Text, Type)]
+collectRecordTypeFieldsSorted = sort . collectRecordTypeFields

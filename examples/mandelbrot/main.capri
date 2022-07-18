@@ -1,0 +1,7 @@
+module main;
+
+import prelude;
+
+fn main() {
+    print("test");
+};

@@ -26,9 +26,10 @@ library
   exposed-modules:
       Analyzer.AnalyzerError
       Analyzer.DependencyCheck
-      Analyzer.Infer
       Analyzer.Resolver
       Analyzer.Substitution
+      Analyzer.Typecheck
+      Analyzer.Unify
       Codegen
       Lexer
       Name
@@ -43,15 +44,20 @@ library
       src
   build-depends:
       base >=4.7 && <5
+    , bytestring
     , containers
     , directory
+    , file-embed
     , filepath
     , lens
+    , llvm-hs-pretty
+    , llvm-hs-pure
     , megaparsec
     , mtl
     , optparse-applicative
     , parser-combinators
     , process
+    , string-conversions
     , temporary
     , text
     , uniplate
@@ -66,16 +72,21 @@ executable capri-exe
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , bytestring
     , capri
     , containers
     , directory
+    , file-embed
     , filepath
     , lens
+    , llvm-hs-pretty
+    , llvm-hs-pure
     , megaparsec
     , mtl
     , optparse-applicative
     , parser-combinators
     , process
+    , string-conversions
     , temporary
     , text
     , uniplate
@@ -91,16 +102,21 @@ test-suite capri-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , bytestring
     , capri
     , containers
     , directory
+    , file-embed
     , filepath
     , lens
+    , llvm-hs-pretty
+    , llvm-hs-pure
     , megaparsec
     , mtl
     , optparse-applicative
     , parser-combinators
     , process
+    , string-conversions
     , temporary
     , text
     , uniplate

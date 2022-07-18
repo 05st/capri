@@ -1,9 +1,0 @@
-module main;
-
-import io;
-
-fn id<a>(x: a) x;
-
-fn main() {
-    print(id<str>("test"));
-}

@@ -1,0 +1,22 @@
+module main;
+
+import prelude;
+
+enum MaybeStr = <just(str), none>;
+enum ListI64 = <cons(i64, ListI64), empty>;
+
+fn id(x) x;
+
+fn main() {
+    let justStr = MaybeStr::just("lol");
+    let noneStr = MaybeStr::none;
+
+    let test = ListI64::cons(123, ListI64::empty);
+
+    match test {
+        ListI64::cons(a, b) => a,
+        ListI64::empty => 0
+    };
+
+    print(id("test"));
+};

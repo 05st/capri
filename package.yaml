@@ -32,6 +32,11 @@ dependencies:
 - uniplate
 - lens
 - filepath
+- llvm-hs-pure
+- llvm-hs-pretty
+- string-conversions
+- file-embed
+- bytestring
 
 library:
   source-dirs: src

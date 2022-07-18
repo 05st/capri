@@ -1,4 +1,5 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
@@ -6,33 +7,44 @@ import System.Environment
 import System.Directory
 import System.Process
 import System.FilePath
+import System.IO
+import System.IO.Temp
 
+import Data.String.Conversions
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Encoding as T
+import Data.FileEmbed
+import qualified Data.ByteString as B
 
 import Control.Monad
 import Options.Applicative
 
+import qualified LLVM.AST as AST
+import LLVM.Pretty
+
 import Parser
 import Analyzer.DependencyCheck
 import Analyzer.Resolver
-import Analyzer.Infer
+import Analyzer.Typecheck
 import Codegen
 
 data Options = Options
     { srcDir :: FilePath
     , outPath :: FilePath
-    , cc :: String
-    , stlDir :: Maybe FilePath
     , noStl :: Bool
     }
+
+runtimeEmbedded :: B.ByteString
+runtimeEmbedded = $(embedFile "src/runtime.c")
+
+stlEmbedded :: [(FilePath, B.ByteString)]
+stlEmbedded = $(embedDir "stl")
 
 options :: Parser Options
 options = Options
     <$> strOption (long "dir" <> short 'd' <> value "./" <> metavar "DIR" <> help "Source directory")
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
-    <*> strOption (long "cc" <> short 'c' <> value "gcc" <> help "C Compiler as backend")
-    <*> (optional $ strOption (long "stl" <> metavar "DIR" <> help "Standard library directory"))
     <*> switch (long "no-stl" <> help "Don't search for STL directory")
 
 main :: IO ()
@@ -54,22 +66,30 @@ readDir path = do
     return (readInputs ++ readInputsFromChildDirs)
 
 runOpts :: Options -> IO ()
-runOpts (Options srcDir outPath cc stlDir noStl) = do
+runOpts (Options srcDir outPath noStl) = do
     readInputs <- readDir srcDir
-    (stlDir', stlDirInputs) <-
-        if noStl then return ("", []) else
-            case stlDir of
-                Just path -> (path,) <$> readDir path
-                Nothing -> do
-                    pathFromEnv <- getEnv "CAPRI_STL"
-                    (pathFromEnv,) <$> readDir pathFromEnv
 
-    case (parse srcDir readInputs stlDir' stlDirInputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . inferProgram of
+    let stlInputs =
+            if noStl
+                then []
+                else map (\(fp, i) -> (fp, (cs i) :: T.Text)) stlEmbedded
+
+    case (parse srcDir readInputs stlInputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . typecheckProgram of
         Left err -> putStrLn err
         Right typed -> do
-            genFiles <- generate typed
-            print genFiles
-            callProcess cc (genFiles ++ ["-O2", "-o", outPath])
+            let llvmMod = generate typed
+            llvmFile <- emptySystemTempFile "capri.ll"
+            runtimeFile <- emptySystemTempFile "capri.c"
+
+            handle <- openFile llvmFile ReadWriteMode
+            T.hPutStrLn handle (cs $ ppllvm llvmMod)
+            hClose handle
+
+            B.writeFile runtimeFile runtimeEmbedded
+
+            callProcess "clang" [llvmFile, runtimeFile, "-O2", "-o", outPath]
+
+            print [llvmFile, runtimeFile]
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a

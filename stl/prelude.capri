@@ -1,0 +1,5 @@
+// The STL is embedded into the compiler
+
+module prelude;
+
+pub import io;

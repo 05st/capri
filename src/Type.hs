@@ -10,20 +10,21 @@ import Data.Data
 import Text.Megaparsec (SourcePos)
 
 import Name
+import SyntaxInfo
 
-type Row = Type
+data Kind
+    = KStar
+    | KArrow Kind Kind
+
 data Type
-    = TConst Name
-    | TVar TVar
-    | TApp Type [Type]
-    | TArrow [Type] Type
-    | TRecord Row
-    | TVariant Row
-    | TRowEmpty
-    | TRowExtend Text Type Row
-    | TPtr Type
+    = TConst        Name
+    | TVar          TVar
+    | TApp          Type [Type]
+    | TArrow        [Type] Type
+    | TRecordExtend Text Type Type
+    | TRecordEmpty
+    | TPtr          Type
     deriving (Eq, Data, Ord)
--- | TRowExtend (LabelMap Type) Row
 
 newtype TVar
     = TV Text
@@ -33,17 +34,8 @@ data PolyType
     = Forall [TVar] Type
     deriving (Show)
 
-{-
-data TVar
-    = TVPlain Text
-    | TVUnbound Text Int
-    | TVLink Type
-    | TGeneric Text
-    deriving (Show)
--}
-
 data Constraint
-    = Constraint SourcePos Type Type
+    = Constraint SyntaxInfo Type Type
     deriving (Show)
 
 pattern TInt8 = TConst (Unqualified "i8")
@@ -61,17 +53,24 @@ pattern TString = TConst (Unqualified "str")
 pattern TBool = TConst (Unqualified "bool")
 pattern TUnit = TConst (Unqualified "unit")
 
+instance Show Kind where
+    show KStar = "*"
+    show (KArrow k1 k2) = "(" ++ show k1 ++ ") -> (" ++ show k2 ++ ")"
+
 instance Show Type where
     show (TConst name) = show name
     show (TVar tv) = show tv
     show (TApp a bs) = show a ++ "<" ++ intercalate ", " (map show bs) ++ ">"
     show (TArrow ps rt) = intercalate ", " (map show ps) ++ " -> " ++ show rt
-    show (TRecord row) = "{" ++ show row ++ "}"
-    show (TVariant row) = "<" ++ show row ++ ">"
-    show TRowEmpty = "<empty row>"
-    show (TRowExtend l t TRowEmpty) = unpack l ++ ": " ++ show t
-    show (TRowExtend l t r) = unpack l ++ ": " ++ show t ++ ", " ++ show r
+    show TRecordEmpty = "{}"
+    show t@TRecordExtend {} =
+        let fields = collectRecordTypeFields t
+        in "{" ++ (intercalate ", " [unpack l ++ ": " ++ show t | (l, t) <- fields]) ++ "}"
     show (TPtr t) = show t ++ "*"
 
 instance Show TVar where
     show (TV name) = unpack name
+
+collectRecordTypeFields :: Type -> [(Text, Type)]
+collectRecordTypeFields (TRecordExtend l t r) = (l, t) : collectRecordTypeFields r
+collectRecordTypeFields _ = []

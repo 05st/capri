@@ -5,7 +5,7 @@
 
 module Analyzer.Resolver where
 
-import Data.Text (Text, pack, take, toUpper)
+import Data.Text (Text, pack, unpack, take, toUpper)
 import Data.Maybe
 import Control.Monad.State
 import Control.Monad.Reader
@@ -26,6 +26,7 @@ data ResolveState = ResolveState
     { nameSet :: S.Set Name
     , pubMap :: M.Map Name Bool
     , typeAliasMap :: M.Map Name Type
+    , enumMap :: M.Map Name [Text]
     , curMod :: Maybe UntypedModule 
     , extraSet :: S.Set Name -- probably not the best way to check for duplicate top levels but works
     , externSet :: S.Set Text
@@ -39,7 +40,8 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         initResolveState = ResolveState {
             nameSet = initNameSet,
             pubMap = initPubMap,
-            typeAliasMap = initTypeAliasMap,
+            typeAliasMap = initTypeAliasMap, -- typeAliasMap/enumMap also serve to distinguish between types of toplevel definitions
+            enumMap = initEnumMap,           -- to prevent from using a function as the name of a type, since nameSet doesn't distinguish
             curMod = Nothing,
             extraSet = S.empty,
             externSet = S.empty,
@@ -51,25 +53,32 @@ resolveProgram prog = evalState (runReaderT (runExceptT (traverse resolveModule 
         initImportsMap = M.fromList $ map (\mod -> (getModFullName mod, modImports mod)) prog
         initNameSet = S.fromList $ concatMap (\mod -> concatMap (fullNameHelper mod) (modTopLvls mod)) prog
         initTypeAliasMap = M.fromList $ concatMap (\mod -> concatMap (typeAliasEntry mod) (modTopLvls mod)) prog
-        typeAliasEntry mod tl@(TLType _ _ _ _ typ) = [(head $ fullNameHelper mod tl, typ)]
-        typeAliasEntry _ _ = []
+        initEnumMap = M.fromList $ concatMap (\mod -> concatMap (enumEntry mod) (modTopLvls mod)) prog
         -- ^ contains all of the top level declarations of each module, this is so mutual recursion works
         
-        fullNameHelper mod (TLFunc _ _ _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
+        fullNameHelper mod (TLFunc _ _ _ _ (Unqualified name) _ _ _) = [Qualified (getModFullName mod) name]
         fullNameHelper mod (TLType _ _ (Unqualified name) _ _) = [Qualified (getModFullName mod) name]
-        fullNameHelper _ (TLFunc _ _ _ _ _ name _ _ _) = [name]
+        fullNameHelper mod (TLEnum _ _ (Unqualified name) _ _) = [Qualified (getModFullName mod) name]
+        fullNameHelper _ (TLFunc _ _ _ _ name _ _ _) = [name]
         fullNameHelper _ (TLType _ _ name _ _) = [name]
+        fullNameHelper _ (TLEnum _ _ name _ _) = [name]
+
+        typeAliasEntry mod tl@(TLType _ _ _ _ typ) = [(head $ fullNameHelper mod tl, typ)]
+        typeAliasEntry _ _ = []
+
+        enumEntry mod tl@(TLEnum _ _ _ _ variants) = [(head $ fullNameHelper mod tl, map fst variants)]
+        enumEntry _ _ = []
 
 resolveModule :: UntypedModule -> Resolve UntypedModule
 resolveModule mod = do
     state <- get
-    put (state { curMod = Just mod, externSet = S.fromList (map fst (modExterns mod)) })
+    put (state { curMod = Just mod, externSet = S.fromList (map (\(n, _, _) -> n) (modExterns mod)) })
     resolvedTopLvls <- traverse resolveTopLvl (modTopLvls mod)
     return (mod { modTopLvls = resolvedTopLvls })
 
 resolveTopLvl :: UntypedTopLvl -> Resolve UntypedTopLvl
 resolveTopLvl = \case
-    TLFunc info () tvars isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
+    TLFunc info () isPub isOper name@(Unqualified unqual) params typeAnnot expr -> do
         fullName <- topLvlDefinition info unqual
         typeAnnot' <- resolveTypeAnnot info typeAnnot
 
@@ -78,25 +87,33 @@ resolveTopLvl = \case
             pnames' <- traverse (insertNameToSet . extractName) pnames
             pannots' <- traverse (resolveTypeAnnot info) pannots
             expr' <- resolveExpr expr
-            return (TLFunc info () tvars isPub isOper fullName (zip pnames' pannots') typeAnnot' expr'))
+            return (TLFunc info () isPub isOper fullName (zip pnames' pannots') typeAnnot' expr'))
 
     TLType info isPub name@(Unqualified unqual) tvars typ -> do
         name' <- topLvlDefinition info unqual
-        -- state <- get
-        -- put (state { typeAliasMap = M.insert name' typ (typeAliasMap state) })
         TLType info isPub name' tvars <$> resolveType info typ
 
+    TLEnum info isPub name@(Unqualified unqual) tvars variants -> do
+        name' <- topLvlDefinition info unqual
+        TLEnum info isPub name' tvars <$> traverse (resolveEnumVariant info) variants
+
     _ -> undefined
+
     where
+        -- Adds to the extraSet which is used for checking redefinitions
         topLvlDefinition info unqual = do
             eset <- gets extraSet
-            scope <- prependModulePath []
+            scope <- gets (getModFullName . fromJust . curMod) -- scope <- prependModulePath []
             let fullName = Qualified scope unqual
             when (fullName `S.member` eset)
-                $ throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Redefinition of " ++ show fullName))
+                $ throwError (GenericAnalyzerError info ("Redefinition of " ++ show fullName))
             state <- get
             put (state { extraSet = S.insert fullName eset })
             return fullName
+
+        resolveEnumVariant info (name, types) = do
+            resolvedTypes <- traverse (resolveType info) types
+            return (name, resolvedTypes)
 
 resolveDecl :: UntypedDecl -> Resolve UntypedDecl
 resolveDecl = \case
@@ -118,96 +135,128 @@ resolveStmt = \case
 resolveExpr :: UntypedExpr -> Resolve UntypedExpr
 resolveExpr = \case
     lit@ELit {} -> return lit
-    EVar info _ types name -> EVar info () types <$> resolveName info name
+
+    EVar info _ name -> EVar info () <$> resolveName info name
+
     EAssign info _ lhs rhs -> do
         lhs' <- resolveExpr lhs
         rhs' <- resolveExpr rhs
         return (EAssign info () lhs' rhs')
+
     EBlock info _ decls expr -> do
         tscope <- tmpScope
         local (++ [tscope]) (do
             decls' <- traverse resolveDecl decls
             expr' <- resolveExpr expr
             return (EBlock info () decls' expr'))
+
     EIf info _ cond exprA exprB -> do
         cond' <- resolveExpr cond
         exprA' <- resolveExpr exprA
         exprB' <- resolveExpr exprB
         return (EIf info () cond' exprA' exprB')
+
     EMatch info _ expr branches -> do
         expr' <- resolveExpr expr
-        branches' <- traverse runResolveBranch branches
+        branches' <- traverse (runResolveBranch info) branches
         return (EMatch info () expr' branches')
+
     EBinOp info _ name lhs rhs -> do
         lhs' <- resolveExpr lhs
         rhs' <- resolveExpr rhs
         name' <- resolveName info name
         return (EBinOp info () name' lhs' rhs')
+
     EUnaOp info _ name expr -> do
         expr' <- resolveExpr expr
         name' <- resolveName info name
         return (EUnaOp info () name' expr')
+
     EClosure info _ cvars params tann expr -> do
         undefined
+
     ECall info _ expr args -> do
         expr' <- resolveExpr expr
         args' <- traverse resolveExpr args
         return (ECall info () expr' args')
+
     ECast info typ expr -> do
         typ' <- resolveType info typ
         expr' <- resolveExpr expr
         return (ECast info typ' expr')
+
     ERecordEmpty info _ -> return (ERecordEmpty info ())
+
     ERecordSelect info _ expr label -> do
         expr' <- resolveExpr expr
         return (ERecordSelect info () expr' label)
+
     ERecordRestrict info _ expr label -> do
         expr' <- resolveExpr expr
         return (ERecordRestrict info () expr' label)
+
     ERecordExtend info _ expr1 label expr2 -> do
         expr1' <- resolveExpr expr1
         expr2' <- resolveExpr expr2
         return (ERecordExtend info () expr1' label expr2')
-    EVariant info _ expr label -> do
-        expr' <- resolveExpr expr
-        return (EVariant info () expr' label)
 
-resolveBranch :: (Pattern, UntypedExpr) -> Resolve (Pattern, UntypedExpr)
-resolveBranch (PWild, expr) = (PWild, ) <$> resolveExpr expr
-resolveBranch (PVar (Unqualified name), expr) = do
+    EVariant info _ enumName variantLabel exprs -> do
+        enumName' <- resolveName info enumName
+        exprs' <- traverse resolveExpr exprs
+        verifyEnumAndVariantExists info enumName' variantLabel
+        return (EVariant info () enumName' variantLabel exprs')
+
+runResolveBranch info branch = do
+    tscope <- tmpScope
+    local (++ [tscope]) (resolveBranch info branch)
+
+resolveBranch :: SyntaxInfo -> (Pattern, UntypedExpr) -> Resolve (Pattern, UntypedExpr)
+resolveBranch _ (PWild, expr) = (PWild, ) <$> resolveExpr expr
+resolveBranch _ (PVar (Unqualified name), expr) = do
     name' <- insertNameToSet name
     (PVar name', ) <$> resolveExpr expr
-resolveBranch (PVariant label (Unqualified vname), expr) = do
-    name' <- insertNameToSet vname
-    (PVariant label name', ) <$> resolveExpr expr
-resolveBranch (PLit lit, expr) = do
+resolveBranch info (PVariant enumName label varNames, expr) = do
+    enumName' <- resolveName info enumName
+
+    verifyEnumAndVariantExists info enumName' label
+
+    let varNamesUnquals = map (\(Unqualified unqual) -> unqual) varNames
+    varNames' <- traverse insertNameToSet varNamesUnquals
+
+    (PVariant enumName' label varNames', ) <$> resolveExpr expr
+resolveBranch _ (PLit lit, expr) = do
     (PLit lit, ) <$> resolveExpr expr
-resolveBranch _ = undefined
-
-newtype Asd = Asd Asd
-
-runResolveBranch branch = do
-    tscope <- tmpScope
-    local (++ [tscope]) (resolveBranch branch)
+resolveBranch _ _ = undefined
 
 resolveType :: SyntaxInfo -> Type -> Resolve Type
 resolveType info = \case
     typ@(TConst name@(Unqualified unqual)) | unqual `elem` baseTypes -> return typ
+
     typ@(TConst name) -> do
         name' <- resolveName info name
         aliases <- gets typeAliasMap
         verifyNameExists info name'
+        -- Check if it's a type alias first
         case M.lookup name' aliases of
             Just parent -> resolveType info parent
-            Nothing -> throwError (UndefinedError (syntaxInfoSourcePos info) (show name')) -- return (TConst name')
+            Nothing -> do
+                enums <- gets enumMap
+                if M.member name' enums
+                    then return (TConst name')
+                    -- This means a function or something else with the name of the type was being used as the type
+                    else throwError (UndefinedError info (show name')) 
+
     TApp typ typs -> TApp <$> resolveType info typ <*> traverse (resolveType info) typs
+
     TArrow typs typ -> TArrow <$> traverse (resolveType info) typs <*> resolveType info typ
+
     TPtr typ -> TPtr <$> resolveType info typ
+
     tv@TVar {} -> return tv
-    TRecord row -> TRecord <$> resolveType info row
-    TVariant row -> TVariant <$> resolveType info row
-    TRowEmpty -> return TRowEmpty
-    TRowExtend label fieldType rest -> TRowExtend label <$> resolveType info fieldType <*> resolveType info rest
+
+    TRecordEmpty -> return TRecordEmpty
+
+    TRecordExtend label fieldType rest -> TRecordExtend label <$> resolveType info fieldType <*> resolveType info rest
     where
         baseTypes =
             ["i8", "i16", "i32", "i64",
@@ -227,7 +276,7 @@ checkNameDuplicate info name = do
     set <- gets nameSet
     fullScope <- prependModulePath curLocalScope
     when (Qualified fullScope name `S.member` set)
-        $ throwError (RedefinitionError (syntaxInfoSourcePos info) (show name))
+        $ throwError (RedefinitionError info (show name))
 
 insertNameToSet :: Text -> Resolve Name
 insertNameToSet name = do
@@ -247,10 +296,19 @@ resolveName info name =
 
 verifyNameExists :: SyntaxInfo -> Name -> Resolve ()
 verifyNameExists info (Unqualified unqual) =
-    throwError (GenericAnalyzerError (syntaxInfoSourcePos info) "Attempt to verify unqualified name")
+    throwError (GenericAnalyzerError info "Attempt to verify unqualified name")
 verifyNameExists info name@Qualified {} = do
     set <- gets nameSet
-    unless (name `S.member` set) $ throwError (UndefinedError (syntaxInfoSourcePos info) (show name))
+    unless (name `S.member` set) $ throwError (UndefinedError info (show name))
+
+verifyEnumAndVariantExists :: SyntaxInfo -> Name -> Text -> Resolve ()
+verifyEnumAndVariantExists info enumName variantLabel = do
+    enums <- gets enumMap
+    case M.lookup enumName enums of
+        Nothing ->
+            throwError (GenericAnalyzerError info ("Enum " ++ show enumName ++ " doesn't exist"))
+        Just variants ->
+            unless (variantLabel `elem` variants) $ throwError (GenericAnalyzerError info ("Variant '" ++ unpack variantLabel ++ "' of " ++ show enumName ++ " doesn't exist"))
 
 qualifyName :: SyntaxInfo -> Text -> Resolve Name
 qualifyName info name = do
@@ -267,12 +325,13 @@ qualifyName info name = do
             isPubs <- gets pubMap
             case filter (\n -> fromMaybe False (M.lookup n isPubs)) exists of
                 [] -> do
+                    -- check module externs
                     externs <- gets externSet
                     if name `S.member` externs
                         then return (Unqualified name)
-                        else throwError (UndefinedError (syntaxInfoSourcePos info) (show name))
+                        else throwError (UndefinedError info (show name))
                 [onlyOne] -> return onlyOne
-                multiple -> throwError (GenericAnalyzerError (syntaxInfoSourcePos info) ("Multiple definitions found: " ++ show multiple))
+                multiple -> throwError (GenericAnalyzerError info ("Multiple definitions found: " ++ show multiple))
     where
         qualifyNameHelper localScope = do
             set <- gets nameSet
