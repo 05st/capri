@@ -72,7 +72,7 @@ generate :: TypedProgram -> AST.Module
 generate prog =
     flip evalState (GenEnv { operands = M.empty, strings = M.empty, enumMap = M.empty, variantMap = M.empty })
         $ L.buildModuleT "capri"
-        $ do mapM_ genModule prog
+        $ mapM_ genModule prog
 
 genModule :: TypedModule -> LLVM ()
 genModule mod = do

@@ -1,6 +1,3 @@
-// Capri runtime
-// This file is embedded into the compiler
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -11,7 +8,6 @@ void c_print_str(char* str) { printf("%s", str); }
 void c_print_i64(int64_t n) { printf("%lld", n); }
 void c_print_f64(double n) { printf("%lf", n); }
 
-// Temp
 double c_i64_to_f64(int64_t n) { return (double)n; }
 double c_f64_to_i64(double n) { return (int64_t)n; }
 
@@ -40,10 +36,3 @@ bool c_bool_and(bool a, bool b) { return a && b; }
 
 int64_t c_clock() { return clock(); }
 int64_t c_clocks_per_sec() { return CLOCKS_PER_SEC; }
-
-// Entry point
-extern int main__main();
-int main() {
-    main__main();
-    return 0;
-}

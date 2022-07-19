@@ -1,5 +1,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
@@ -35,8 +36,8 @@ data Options = Options
     , noStl :: Bool
     }
 
-runtimeEmbedded :: B.ByteString
-runtimeEmbedded = $(embedFile "src/runtime.c")
+runtimeEmbedded :: [(FilePath, B.ByteString)]
+runtimeEmbedded = $(embedDir "runtime")
 
 stlEmbedded :: [(FilePath, B.ByteString)]
 stlEmbedded = $(embedDir "stl")
@@ -69,27 +70,32 @@ runOpts :: Options -> IO ()
 runOpts (Options srcDir outPath noStl) = do
     readInputs <- readDir srcDir
 
+    let convertUtil (fp, i) = (fp, (cs i) :: T.Text)
     let stlInputs =
             if noStl
                 then []
-                else map (\(fp, i) -> (fp, (cs i) :: T.Text)) stlEmbedded
+                else map convertUtil stlEmbedded
 
     case (parse srcDir readInputs stlInputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . typecheckProgram of
         Left err -> putStrLn err
         Right typed -> do
             let llvmMod = generate typed
             llvmFile <- emptySystemTempFile "capri.ll"
-            runtimeFile <- emptySystemTempFile "capri.c"
 
             handle <- openFile llvmFile ReadWriteMode
             T.hPutStrLn handle (cs $ ppllvm llvmMod)
             hClose handle
 
-            B.writeFile runtimeFile runtimeEmbedded
+            let writeRuntimeFile (fp, runtimeInput) = do
+                    runtimeFile <- emptySystemTempFile ("capri" ++ takeExtension fp)
+                    B.writeFile runtimeFile runtimeInput
+                    return runtimeFile
+            runtimeFiles <- traverse writeRuntimeFile runtimeEmbedded
 
-            print [llvmFile, runtimeFile]
+            let allFiles = llvmFile : runtimeFiles
+            print allFiles
 
-            callProcess "clang" ["-Wno-override-module", llvmFile, runtimeFile, "-Ofast", "-o", outPath]
+            callProcess "clang" (allFiles ++ ["-Wno-override-module", "-Ofast", "-o", outPath])
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a
