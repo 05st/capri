@@ -3,33 +3,39 @@ module main;
 extern c_f64_add(f64, f64): f64;
 extern c_f64_sub(f64, f64): f64;
 extern c_f64_mul(f64, f64): f64;
+extern c_f64_div(f64, f64): f64;
 extern c_f64_gt(f64, f64): bool;
 extern c_f64_lt(f64, f64): bool;
 
+extern c_i64_to_f64(i64): f64;
+
 extern c_bool_or(bool, bool): bool;
 extern c_bool_and(bool, bool): bool;
+
+extern c_clock(): i64;
+extern c_clocks_per_sec(): i64;
 
 import prelude;
 
 op infixl 5 +.(a: f64, b: f64): f64     c_f64_add(a, b);
 op infixl 5 -.(a: f64, b: f64): f64     c_f64_sub(a, b);
 op infixl 10 *.(a: f64, b: f64): f64    c_f64_mul(a, b);
+op infixl 10 /.(a: f64, b: f64): f64    c_f64_div(a, b);
 op infixl 4 >.(a: f64, b: f64): bool    c_f64_gt(a, b);
 op infixl 4 <.(a: f64, b: f64): bool    c_f64_lt(a, b);
 
 op infixl 1 ||(a: bool, b: bool): bool  c_bool_or(a, b);
 op infixl 2 &&(a: bool, b: bool): bool  c_bool_and(a, b);
 
-fn pd(d: f64): unit {
+fn pd(d: f64): unit
     if d >. 8.0
-        print("#")
+        print_str("#")
     else if d >. 4.0
-        print("+")
+        print_str("+")
     else if d >. 2.0
-        print(".")
+        print_str(".")
     else
-        print(" ");
-};
+        print_str(" ");
 
 fn converge(cr, ci) {
     let mut r = 0.0;
@@ -55,7 +61,7 @@ fn plot(xmin, xmax, xstep, ymin, ymax, ystep) {
             pd(converge(x, y));
             x = x +. xstep;
         };
-        print("\n");
+        print_str("\n");
         y = y +. ystep;
     };
 };
@@ -66,5 +72,20 @@ fn main() {
     let rm = 0.05;
     let im = 0.07;
 
-    plot(rs, rs +. rm *. 78.0, rm, is, is +. im *. 40.0, im);
+    let mut avg_time = 0.0;
+
+    let mut count = 0.0;
+    while count <. 100.0 {
+        let start = c_i64_to_f64(c_clock());
+
+        plot(rs, rs +. rm *. 78.0, rm, is, is +. im *. 40.0, im);
+
+        let elapsed = (c_i64_to_f64(c_clock()) -. start) /. c_i64_to_f64(c_clocks_per_sec());
+        avg_time = avg_time +. elapsed;
+        count = count +. 1.0;
+    };
+
+    print_str("Drew 100 times\n");
+    print_str("Avg. time per draw (s): ");
+    print_f64(avg_time /. 100.0);
 };

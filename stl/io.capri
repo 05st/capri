@@ -1,7 +1,9 @@
 module io;
 
-extern print_str(str): unit;
+extern c_print_str(str): unit;
+extern c_print_i64(i64): unit;
+extern c_print_f64(f64): unit;
 
-pub fn print(text: str): unit {
-    print_str(text);
-};
+pub fn print_str(text: str): unit { c_print_str(text); };
+pub fn print_i64(num: i64): unit { c_print_i64(num); };
+pub fn print_f64(num: f64): unit { c_print_f64(num); };
