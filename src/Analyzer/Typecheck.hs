@@ -201,12 +201,17 @@ inferExpr (EAssign info _ lhs rhs) = do
 
     constrain info lhsType rhsType
 
-    case lhs' of
-        EVar varInfo _ name -> do
-            isMut <- lookupMut varInfo name
-            unless isMut $ throwError (GenericAnalyzerError info ("Cannot assign to immutable variable '" ++ show name ++ "'"))
-            return (EAssign info lhsType lhs' rhs')
-        _ -> throwError (GenericAnalyzerError info "Cannot assign to non-lvalue")
+    mutCheck <- checkMut lhs'
+    case mutCheck of
+        Just (True, _) -> return (EAssign info lhsType lhs' rhs')
+        Just (False, name) -> throwError (GenericAnalyzerError info ("Cannot assign to immutable variable '" ++ show name ++ "'"))
+        Nothing -> throwError (GenericAnalyzerError info "Cannot assign to non-lvalue")
+    where
+        -- Allow assigning to ERecordSelect and EVar ('lvalues')
+        -- If ERecordSelect, propagate up ERecordSelects until var being modified is found
+        checkMut (ERecordSelect _ _ e _) = checkMut e
+        checkMut (EVar varInfo _ name) = Just . (,name) <$> lookupMut varInfo name
+        checkMut _ = return Nothing
 
 inferExpr (EBlock info _ decls expr) = do
     decls' <- traverse inferDecl decls
@@ -434,9 +439,13 @@ insertToMutSet name = do
 lookupVar :: SyntaxInfo -> Name -> Infer (Type, Bool)
 lookupVar info name = do
     typeEnv <- gets typeEnv
+    tempTypeEnv <- gets tempTypeEnv
     mutSet <- gets mutSet
     let mut = S.member name mutSet
-    let typ = fromJust (M.lookup name typeEnv)
+    let typ =
+            case M.lookup name typeEnv of
+                Just t -> t
+                Nothing -> Forall [] . TVar $ fromJust (M.lookup name tempTypeEnv) -- is this correct?
     (,mut) <$> instantiate typ
 
 lookupType :: SyntaxInfo -> Name -> Infer Type

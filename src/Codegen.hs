@@ -144,14 +144,17 @@ genStmt :: TypedStmt -> Gen ()
 genStmt (SExpr expr) = () <$ genExpr expr
 genStmt (SRet expr) = genExpr expr >>= L.ret
 genStmt (SWhile _ cond body) = mdo
-    L.br whileBlock
+    mkTerminator (L.br whileBlock)
 
     whileBlock <- L.block `L.named` "while"
-    continue <- genExpr cond
-    mkTerminator (L.condBr continue whileBlock mergeBlock)
-    genExpr body
+    cont <- genExpr cond
+    mkTerminator (L.condBr cont bodyBlock exitBlock)
 
-    mergeBlock <- L.block `L.named` "merge"
+    bodyBlock <- L.block `L.named` "body"
+    genExpr body
+    mkTerminator (L.br whileBlock)
+
+    exitBlock <- L.block `L.named` "exit"
     return ()
 
 genLVal :: TypedExpr -> Gen Operand
@@ -172,20 +175,27 @@ genExpr (EAssign _ _ lhs rhs) = do
 genExpr (EBlock _ _ decls expr) = do
     mapM_ genDecl decls
     genExpr expr
-genExpr (EIf _ _ cond a b) = mdo
-    bool <- genExpr cond
-    L.condBr bool thenBlock elseBlock
+genExpr (EIf _ t cond a b) = mdo
+    t' <- convertType t
+    resAddr <- L.alloca t' Nothing 0
+    mkTerminator (L.br entryBlock)
+
+    entryBlock <- L.block `L.named` "if"
+    cond' <- genExpr cond
+    L.condBr cond' thenBlock elseBlock
 
     thenBlock <- L.block `L.named` "then"
     true <- genExpr a
-    mkTerminator (L.br mergeBlock)
+    mkTerminator (L.br exitBlock)
 
     elseBlock <- L.block `L.named` "else"
     false <- genExpr b
-    mkTerminator (L.br mergeBlock)
+    mkTerminator (L.br exitBlock)
 
-    mergeBlock <- L.block `L.named` "merge"
-    L.phi [(true, thenBlock), (false, elseBlock)]
+    exitBlock <- L.block `L.named` "exit"
+    val <- L.phi [(true, thenBlock), (false, elseBlock)]
+    L.store resAddr 0 val
+    L.load resAddr 0
 
 -- todo: rewrite this disaster
 genExpr (EMatch _ _ mexpr branches) = mdo

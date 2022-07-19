@@ -87,9 +87,9 @@ runOpts (Options srcDir outPath noStl) = do
 
             B.writeFile runtimeFile runtimeEmbedded
 
-            callProcess "clang" [llvmFile, runtimeFile, "-O2", "-o", outPath]
-
             print [llvmFile, runtimeFile]
+
+            callProcess "clang" ["-Wno-override-module", llvmFile, runtimeFile, "-O2", "-o", outPath]
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a

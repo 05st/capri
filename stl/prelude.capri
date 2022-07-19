@@ -1,5 +1,5 @@
-// The STL is embedded into the compiler
-
 module prelude;
+
+// The STL is embedded into the compiler
 
 pub import io;

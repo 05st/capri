@@ -190,6 +190,8 @@ pAssign = do
     lhs <- pRecordSelect
     option lhs (do
         symbol "="
+        EAssign synInfo () lhs <$> pExpression)
+        {-
         rhs <- pExpression
 
         -- Desugar <record>.<label> = <expr>
@@ -199,6 +201,7 @@ pAssign = do
                 ERecordSelect info _ recordExpr label ->
                     EAssign synInfo () recordExpr (ERecordExtend info () rhs label (ERecordRestrict info () recordExpr label))
                 _ -> EAssign synInfo () lhs rhs)
+        -}
 
 pRecordSelect :: Parser UntypedExpr
 pRecordSelect = do
