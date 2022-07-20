@@ -5,7 +5,7 @@
 #include <time.h>
 
 void c_print_str(char* str) { printf("%s", str); }
-void c_print_i64(int64_t n) { printf("%lld", n); }
+void c_print_i64(int64_t n) { printf("%ld", n); }
 void c_print_f64(double n) { printf("%lf", n); }
 
 double c_i64_to_f64(int64_t n) { return (double)n; }

@@ -175,9 +175,7 @@ genExpr (EAssign _ _ lhs rhs) = do
 genExpr (EBlock _ _ decls expr) = do
     mapM_ genDecl decls
     genExpr expr
-genExpr (EIf _ t cond a b) = mdo
-    t' <- convertType t
-    resAddr <- L.alloca t' Nothing 0
+genExpr (EIf _ _ cond a b) = mdo
     mkTerminator (L.br entryBlock)
 
     entryBlock <- L.block `L.named` "if"
@@ -186,16 +184,18 @@ genExpr (EIf _ t cond a b) = mdo
 
     thenBlock <- L.block `L.named` "then"
     true <- genExpr a
+    mkTerminator (L.br thenExitBlock)
+    thenExitBlock <- L.block `L.named` "then_exit"
     mkTerminator (L.br exitBlock)
 
     elseBlock <- L.block `L.named` "else"
     false <- genExpr b
+    mkTerminator (L.br elseExitBlock)
+    elseExitBlock <- L.block `L.named` "else_exit"
     mkTerminator (L.br exitBlock)
 
     exitBlock <- L.block `L.named` "exit"
-    val <- L.phi [(true, thenBlock), (false, elseBlock)]
-    L.store resAddr 0 val
-    L.load resAddr 0
+    L.phi [(true, thenExitBlock), (false, elseExitBlock)]
 
 -- todo: rewrite this disaster
 genExpr (EMatch _ _ mexpr branches) = mdo

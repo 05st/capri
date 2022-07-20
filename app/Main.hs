@@ -34,6 +34,7 @@ data Options = Options
     { srcDir :: FilePath
     , outPath :: FilePath
     , noStl :: Bool
+    , fast :: Bool
     }
 
 runtimeEmbedded :: [(FilePath, B.ByteString)]
@@ -46,7 +47,8 @@ options :: Parser Options
 options = Options
     <$> strOption (long "dir" <> short 'd' <> value "./" <> metavar "DIR" <> help "Source directory")
     <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
-    <*> switch (long "no-stl" <> help "Don't search for STL directory")
+    <*> switch (long "no-stl" <> help "Don't compile with the STL")
+    <*> switch (long "fast" <> help "Optimize (aggressively) for speed")
 
 main :: IO ()
 main = runOpts =<< execParser (options `withInfo` infoString)
@@ -60,14 +62,16 @@ readDir path = do
     readInputs <-
         case filter ((== ".capri") . takeExtension) filePaths of
             [] -> [] <$ putStrLn ("No .capri files found under " ++ path)
-            cprFilePaths -> traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
+            cprFilePaths -> do
+                putStrLn (show (length cprFilePaths) ++ " .capri file(s) found under " ++ path)
+                traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
     readInputsFromChildDirs <- concat <$> (do
         childDirs <- filterM doesDirectoryExist filePaths
         traverse (readDir . (++ ['/'])) childDirs)
     return (readInputs ++ readInputsFromChildDirs)
 
 runOpts :: Options -> IO ()
-runOpts (Options srcDir outPath noStl) = do
+runOpts (Options srcDir outPath noStl fast) = do
     readInputs <- readDir srcDir
 
     let convertUtil (fp, i) = (fp, (cs i) :: T.Text)
@@ -81,6 +85,7 @@ runOpts (Options srcDir outPath noStl) = do
         Right typed -> do
             let llvmMod = generate typed
             llvmFile <- emptySystemTempFile "capri.ll"
+            llvmBcFile <- emptySystemTempFile "capri.bc"
 
             handle <- openFile llvmFile ReadWriteMode
             T.hPutStrLn handle (cs $ ppllvm llvmMod)
@@ -92,10 +97,11 @@ runOpts (Options srcDir outPath noStl) = do
                     return runtimeFile
             runtimeFiles <- traverse writeRuntimeFile runtimeEmbedded
 
-            let allFiles = llvmFile : runtimeFiles
-            print allFiles
+            print (llvmFile : runtimeFiles)
 
-            callProcess "clang" (allFiles ++ ["-Wno-override-module", "-Ofast", "-o", outPath])
+            let optimization = if fast then ["-O3"] else []
+            callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
+            callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a
