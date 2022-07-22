@@ -413,8 +413,10 @@ fresh = do
         supply = [1..] >>= flip replicateM ['a'..'z']
 
 generalize :: TypeEnv -> Type -> PolyType
-generalize env t = Forall vars t
-    where vars = S.toList (ftv t S.\\ ftv (M.elems env))
+generalize env typ = Forall (S.toList vs) typ
+    where
+        vs = ftv typ -- `S.difference` ftv (M.elems env)
+        -- ^ THIS IS PROBABLY INCORRECT
 
 instantiate :: PolyType -> Infer Type
 instantiate (Forall vars t) = do
@@ -445,7 +447,7 @@ lookupVar info name = do
     let typ =
             case M.lookup name typeEnv of
                 Just t -> t
-                Nothing -> Forall [] . TVar $ fromJust (M.lookup name tempTypeEnv) -- is this correct?
+                Nothing -> (Forall [] . TVar) (fromJust (M.lookup name tempTypeEnv)) -- is this correct?
     (,mut) <$> instantiate typ
 
 lookupType :: SyntaxInfo -> Name -> Infer Type

@@ -17,6 +17,8 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as T
 import Data.FileEmbed
 import qualified Data.ByteString as B
+import Data.Either.Combinators
+import Data.Functor
 
 import Control.Monad
 import Options.Applicative
@@ -29,6 +31,7 @@ import Analyzer.DependencyCheck
 import Analyzer.Resolver
 import Analyzer.Typecheck
 import Codegen
+import Desugar
 
 data Options = Options
     { srcDir :: FilePath
@@ -64,7 +67,7 @@ readDir path = do
             [] -> [] <$ putStrLn ("No .capri files found under " ++ path)
             cprFilePaths -> do
                 putStrLn (show (length cprFilePaths) ++ " .capri file(s) found under " ++ path)
-                traverse T.readFile cprFilePaths >>= return . zip cprFilePaths
+                traverse T.readFile cprFilePaths <&> zip cprFilePaths
     readInputsFromChildDirs <- concat <$> (do
         childDirs <- filterM doesDirectoryExist filePaths
         traverse (readDir . (++ ['/'])) childDirs)
@@ -74,39 +77,39 @@ runOpts :: Options -> IO ()
 runOpts (Options srcDir outPath noStl fast) = do
     readInputs <- readDir srcDir
 
-    let convertUtil (fp, i) = (fp, (cs i) :: T.Text)
+    let convertUtil (fp, i) = (fp, cs i :: T.Text)
     let stlInputs =
             if noStl
                 then []
                 else map convertUtil stlEmbedded
 
-    case (parse srcDir readInputs stlInputs) >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) >>= mapLeft show . resolveProgram >>= mapLeft show . typecheckProgram of
-        Left err -> putStrLn err
-        Right typed -> do
-            let llvmMod = generate typed
-            llvmFile <- emptySystemTempFile "capri.ll"
-            llvmBcFile <- emptySystemTempFile "capri.bc"
+    case parse srcDir readInputs stlInputs -- parse
+         >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) -- check deps
+         >>= mapLeft show . resolveProgram -- resolve names
+         >>= mapLeft show . typecheckProgram -- infer types
+         >>= desugar of -- desugar
+            Left err -> putStrLn err
+            Right prog -> do
+                let llvmMod = generate prog
+                llvmFile <- emptySystemTempFile "capri.ll"
+                llvmBcFile <- emptySystemTempFile "capri.bc"
 
-            handle <- openFile llvmFile ReadWriteMode
-            T.hPutStrLn handle (cs $ ppllvm llvmMod)
-            hClose handle
+                handle <- openFile llvmFile ReadWriteMode
+                T.hPutStrLn handle (cs $ ppllvm llvmMod)
+                hClose handle
 
-            let writeRuntimeFile (fp, runtimeInput) = do
-                    runtimeFile <- emptySystemTempFile ("capri" ++ takeExtension fp)
-                    B.writeFile runtimeFile runtimeInput
-                    return runtimeFile
-            runtimeFiles <- traverse writeRuntimeFile runtimeEmbedded
+                let writeRuntimeFile (fp, runtimeInput) = do
+                        runtimeFile <- emptySystemTempFile ("capri" ++ takeExtension fp)
+                        B.writeFile runtimeFile runtimeInput
+                        return runtimeFile
+                runtimeFiles <- traverse writeRuntimeFile runtimeEmbedded
 
-            print (llvmFile : runtimeFiles)
+                print (llvmFile : runtimeFiles)
 
-            let optimization = if fast then ["-O3"] else []
-            callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
-            callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
+                let optimization = ["-O3" | fast]
+                callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
+                callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a
 maybeToEither Nothing = Right ()
-
-mapLeft :: (a -> b) -> Either a c -> Either b c
-mapLeft f (Left x) = Left (f x)
-mapLeft _ (Right x) = Right x

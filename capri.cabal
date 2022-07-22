@@ -31,6 +31,7 @@ library
       Analyzer.Typecheck
       Analyzer.Unify
       Codegen
+      Desugar
       Lexer
       Name
       OperatorDef
@@ -47,6 +48,7 @@ library
     , bytestring
     , containers
     , directory
+    , either
     , file-embed
     , filepath
     , lens
@@ -76,6 +78,7 @@ executable capri-exe
     , capri
     , containers
     , directory
+    , either
     , file-embed
     , filepath
     , lens
@@ -106,6 +109,7 @@ test-suite capri-test
     , capri
     , containers
     , directory
+    , either
     , file-embed
     , filepath
     , lens

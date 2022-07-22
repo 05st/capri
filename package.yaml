@@ -37,6 +37,7 @@ dependencies:
 - string-conversions
 - file-embed
 - bytestring
+- either
 
 library:
   source-dirs: src

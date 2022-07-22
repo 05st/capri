@@ -2,6 +2,19 @@ module main;
 
 import prelude;
 
+enum MaybeStr = <just(str), none>;
+
+fn test(a) {
+    match a {
+        MaybeStr::just(s) => print_str(s),
+        MaybeStr::none => print_str("none")
+    };
+};
+
 fn main() {
-    print_str("test");
+    let abc = MaybeStr::just("exists");
+    let xyz = MaybeStr::none;
+
+    test(abc);
+    test(xyz);
 };
