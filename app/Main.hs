@@ -30,8 +30,8 @@ import Parser
 import Analyzer.DependencyCheck
 import Analyzer.Resolver
 import Analyzer.Typecheck
+import Monomorphize
 import Codegen
-import Desugar
 
 data Options = Options
     { srcDir :: FilePath
@@ -87,7 +87,7 @@ runOpts (Options srcDir outPath noStl fast) = do
          >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) -- check deps
          >>= mapLeft show . resolveProgram -- resolve names
          >>= mapLeft show . typecheckProgram -- infer types
-         >>= desugar of -- desugar
+         >>= monomorphize of -- monomorphize
             Left err -> putStrLn err
             Right prog -> do
                 let llvmMod = generate prog

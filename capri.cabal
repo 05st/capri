@@ -31,8 +31,8 @@ library
       Analyzer.Typecheck
       Analyzer.Unify
       Codegen
-      Desugar
       Lexer
+      Monomorphize
       Name
       OperatorDef
       Parser

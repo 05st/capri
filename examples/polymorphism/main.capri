@@ -1,0 +1,29 @@
+module main;
+
+import prelude;
+
+fn id(x)
+    x;
+    
+fn test(x, y) {
+    if x {
+        id(y)
+    } else {
+        y
+    }
+};
+
+fn main() {
+    print_str(test(true, "!@#$%"));
+    test(true, 'c');
+    id(true);
+    id(123);
+    print_str(id("xyz"));
+    print_i64(id(456));
+
+    doStuff();
+};
+
+fn doStuff() {
+    print_str("do stuff\n");
+};

@@ -75,10 +75,18 @@ generate prog =
         $ mapM_ genModule prog
 
 genModule :: TypedModule -> LLVM ()
-genModule mod = do
+genModule mod = mdo
     let externs = modExterns mod
     mapM_ declareExtern externs
-    mapM_ genTopLvl (modTopLvls mod)
+
+    -- Using some recursive-do magic to register the function operands before the functions are defined
+    -- so functions can be called before they are 'defined'.
+    -- there probably exists a better solution
+    traverse (uncurry registerOperand) funcOperMapEntries
+
+    funcOperMapEntries <- concat <$> traverse genTopLvl (modTopLvls mod)
+
+    return ()
     where
         declareExtern (name, paramTypes, retType) = do
             paramTypes' <- traverse convertType paramTypes
@@ -86,17 +94,18 @@ genModule mod = do
             op <- L.extern (textToLLVMName name) paramTypes' retType'
             registerOperand (Unqualified name) op
 
-genTopLvl :: TypedTopLvl -> LLVM ()
+genTopLvl :: TypedTopLvl -> LLVM [(Name, Operand)]
 genTopLvl (TLFunc _ t _ isOper name params _ body) = mdo
     let (TArrow paramTypes retType) = t
-    registerOperand name function
+    -- registerOperand name function        read the paragraph above for explanation
     (function, strs) <- (do
         retType' <- convertType retType
         params <- traverse mkParam (zip paramNames paramTypes)
         func <- L.function funcName params retType' genBody
         strings' <- gets strings
         return (func, strings'))
-    modify (\e -> e { strings = strs })
+
+    [(name, function)] <$ modify (\e -> e { strings = strs })
     where
         (paramNames, _) = unzip params
         funcName = AST.mkName (cs (convertName name))
@@ -109,7 +118,7 @@ genTopLvl (TLFunc _ t _ isOper name params _ body) = mdo
                 registerOperand name addr
             genExpr body >>= L.ret
             return ()
-genTopLvl TLType {} = return () -- nothing to compile for type aliases
+genTopLvl TLType {} = return [] -- nothing to compile for type aliases
 genTopLvl (TLEnum _ _ enumName typeParams variants) = do
     largestVariantSize <- maximum <$> traverse getVariantSize variants
 
@@ -118,7 +127,7 @@ genTopLvl (TLEnum _ _ enumName typeParams variants) = do
 
     registerEnum enumName (largestVariantSize + 1) enumType
 
-    mapM_ genVariantTypes (zip variants [0..]) -- Zip with the tags
+    [] <$ mapM_ genVariantTypes (zip variants [0..]) -- Zip with the tags
     where
         getVariantSize (_, types) = sum <$> traverse sizeofType types
         genVariantTypes ((label, types), tag) = do
@@ -417,7 +426,8 @@ sizeofType = \case
     TBool -> return 1
     TUnit -> return 1
     TPtr _ -> return 8
-    TConst n -> gets (fst . (M.! n) . enumMap) -- just assume its an enum type i guess
+    TConst n ->
+        gets (fst . (M.! n) . enumMap) -- just assume its an enum type i guess
     TVar _ -> undefined
     TApp _ _ -> undefined
     TArrow _ _ -> undefined
@@ -445,7 +455,8 @@ convertType = \case
     TBool -> return AST.i1
     TUnit -> return AST.i1
     TPtr t -> AST.ptr <$> convertType t
-    TConst n -> gets (snd . (M.! n) . enumMap) -- and assume its an enum type here as well i guess
+    TConst n ->
+        gets (snd . (M.! n) . enumMap) -- and assume its an enum type here as well i guess
     TVar _ -> undefined
     TApp _ _ -> undefined
     TArrow paramTypes retType -> do

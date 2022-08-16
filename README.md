@@ -4,17 +4,17 @@ Capri is a statically typed, general purpose programming language with an emphas
 ![Total Lines](https://img.shields.io/tokei/lines/github/05st/capri)
 ![Latest Release](https://img.shields.io/github/v/release/05st/capri?include_prereleases)
 
-The compiler currently targets only LLVM (previously it generated C). Everything in the language is subject to change. Major planned features such as polymorphism are also currently missing. Here is a list of so far implemented features:
+The compiler currently targets only LLVM (previously it generated C). Everything in the language is subject to change. Major planned features such as ad-hoc polymorphism are also currently missing. Here is a list of so far implemented features:
 - Type inference with an extended Hindley-Milner type system
 - Extensible records and enums (algebraic data types)
 - Isorecursive types
+- Parametric polymorphism
 - Module system (which will allow some sort of dynamic linking)
 - User-defined prefix, infix, and postfix operators with arbitrary precedences
 - Pattern matching (exhaustiveness checking is planned)
 - A small standard library
 
 Planned features:
-- Parametric polymorphism
 - Ad-hoc polymorphism (most likely via typeclasses)
 - Optional garbage collector ([Boehm-Demers-Weiser garbage collector](https://en.wikipedia.org/wiki/Boehm_garbage_collector))
 - Lambdas/closures
