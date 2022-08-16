@@ -19,6 +19,7 @@ import Data.FileEmbed
 import qualified Data.ByteString as B
 import Data.Either.Combinators
 import Data.Functor
+import Data.Maybe
 
 import Control.Monad
 import Options.Applicative
@@ -92,7 +93,6 @@ runOpts (Options srcDir outPath noStl fast) = do
             Right prog -> do
                 let llvmMod = generate prog
                 llvmFile <- emptySystemTempFile "capri.ll"
-                llvmBcFile <- emptySystemTempFile "capri.bc"
 
                 handle <- openFile llvmFile ReadWriteMode
                 T.hPutStrLn handle (cs $ ppllvm llvmMod)
@@ -107,8 +107,15 @@ runOpts (Options srcDir outPath noStl fast) = do
                 print (llvmFile : runtimeFiles)
 
                 let optimization = ["-O3" | fast]
-                callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
-                callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
+                optFound <- findExecutable "opt"
+                if isJust optFound then do
+                    putStrLn "Found 'opt', using it"
+
+                    llvmBcFile <- emptySystemTempFile "capri.bc"
+                    callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
+                    callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
+                else
+                    callProcess "clang" (runtimeFiles ++ [llvmFile, "-Wno-override-module", "-o", outPath] ++ optimization)
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a
