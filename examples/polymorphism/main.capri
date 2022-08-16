@@ -14,16 +14,7 @@ fn test(x, y) {
 };
 
 fn main() {
-    print_str(test(true, "!@#$%"));
-    test(true, 'c');
-    id(true);
-    id(123);
-    print_str(id("xyz"));
     print_i64(id(456));
-
-    doStuff();
-};
-
-fn doStuff() {
-    print_str("do stuff\n");
+    print_str(test(true, "!@#$%"));
+    print_str(id("xyz\n"));
 };

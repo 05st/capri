@@ -84,11 +84,11 @@ runOpts (Options srcDir outPath noStl fast) = do
                 then []
                 else map convertUtil stlEmbedded
 
-    case parse srcDir readInputs stlInputs -- parse
-         >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p) -- check deps
-         >>= mapLeft show . resolveProgram -- resolve names
-         >>= mapLeft show . typecheckProgram -- infer types
-         >>= monomorphize of -- monomorphize
+    case parse srcDir readInputs stlInputs                                      -- parse
+         >>= (\p -> p <$ (mapLeft show . maybeToEither . checkDependencies) p)  -- check dependencies
+         >>= mapLeft show . resolveProgram                                      -- resolve names
+         >>= mapLeft show . typecheckProgram                                    -- infer types
+         >>= monomorphize of                                                    -- monomorphize
             Left err -> putStrLn err
             Right prog -> do
                 let llvmMod = generate prog

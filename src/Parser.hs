@@ -299,7 +299,7 @@ pRecordType = braces (option TRecordEmpty rowExtend)
         rowExtend = do
             rowsParsed <- sepBy1 row comma
             let rowExtends = map (uncurry TRecordExtend) rowsParsed
-            extended <- option TRecordEmpty (symbol "|" *> pRecordType <|> TConst . Unqualified <$> typeIdentifier)
+            extended <- option TRecordEmpty (symbol "|" *> (((TConst . Unqualified <$> typeIdentifier) <|> pRecordType) <?> "record type or type identifier"))
 
             pure (foldr ($) extended rowExtends)
         row = (,) <$> identifier <*> (colon *> pType)
