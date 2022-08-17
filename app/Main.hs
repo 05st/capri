@@ -50,7 +50,7 @@ stlEmbedded = $(embedDir "stl")
 options :: Parser Options
 options = Options
     <$> strOption (long "dir" <> short 'd' <> value "./" <> metavar "DIR" <> help "Source directory")
-    <*> strOption (long "out" <> short 'o' <> value "a.out" <> metavar "FILE" <> help "Output path")
+    <*> strOption (long "out" <> short 'o' <> value ("a" ++ exeExtension) <> metavar "FILE" <> help "Output path")
     <*> switch (long "no-stl" <> help "Don't compile with the STL")
     <*> switch (long "fast" <> help "Optimize (aggressively) for speed")
 
@@ -65,9 +65,9 @@ readDir path = do
     filePaths <- map (path ++) <$> listDirectory path
     readInputs <-
         case filter ((== ".capri") . takeExtension) filePaths of
-            [] -> [] <$ putStrLn ("No .capri files found under " ++ path)
+            [] -> [] <$ putStrLn ("INFO: No .capri files found under " ++ path)
             cprFilePaths -> do
-                putStrLn (show (length cprFilePaths) ++ " .capri file(s) found under " ++ path)
+                putStrLn ("INFO: " ++ show (length cprFilePaths) ++ " .capri file(s) found under " ++ path)
                 traverse T.readFile cprFilePaths <&> zip cprFilePaths
     readInputsFromChildDirs <- concat <$> (do
         childDirs <- filterM doesDirectoryExist filePaths
@@ -104,18 +104,22 @@ runOpts (Options srcDir outPath noStl fast) = do
                         return runtimeFile
                 runtimeFiles <- traverse writeRuntimeFile runtimeEmbedded
 
-                print (llvmFile : runtimeFiles)
+                putStrLn ("INFO: " ++ show (llvmFile : runtimeFiles))
 
                 let optimization = ["-O3" | fast]
+                clangFound <- findExecutable "clang"
                 optFound <- findExecutable "opt"
-                if isJust optFound then do
-                    putStrLn "Found 'opt', using it"
+                if isJust clangFound then
+                    if isJust optFound then do
+                        putStrLn "INFO: Found 'opt', using it"
 
-                    llvmBcFile <- emptySystemTempFile "capri.bc"
-                    callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
-                    callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
+                        llvmBcFile <- emptySystemTempFile "capri.bc"
+                        callProcess "opt" ([llvmFile, "-o", llvmBcFile] ++ optimization)
+                        callProcess "clang" (runtimeFiles ++ [llvmBcFile, "-Wno-override-module", "-o", outPath] ++ optimization)
+                    else
+                        callProcess "clang" (runtimeFiles ++ [llvmFile, "-Wno-override-module", "-o", outPath] ++ optimization)
                 else
-                    callProcess "clang" (runtimeFiles ++ [llvmFile, "-Wno-override-module", "-o", outPath] ++ optimization)
+                    putStrLn "ERROR: Could not locate clang (required)"
 
 maybeToEither :: Maybe a -> Either a ()
 maybeToEither (Just a) = Left a
