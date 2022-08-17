@@ -2,6 +2,8 @@ module main;
 
 import prelude;
 
+enum Maybe<a> = <just(a), none>;
+
 fn id(x)
     x;
     
@@ -14,6 +16,12 @@ fn test(x, y) {
 };
 
 fn main() {
+    Maybe::just(123);
+    Maybe::just(false);
+    id(Maybe::just("abc"));
+    
+    test(true, id(Maybe::just('c')));
+
     print_i64(id(456));
     print_str(test(true, "!@#$%"));
     print_str(id("xyz\n"));

@@ -119,7 +119,7 @@ genTopLvl (TLFunc _ t _ isOper name params _ body) = mdo
             genExpr body >>= L.ret
             return ()
 genTopLvl TLType {} = return [] -- nothing to compile for type aliases
-genTopLvl (TLEnum _ _ enumName typeParams variants) = do
+genTopLvl (TLEnum _ _ enumName _ variants) = do
     largestVariantSize <- maximum <$> traverse getVariantSize variants
 
     let enumStructType = AST.StructureType False [AST.i8, AST.ArrayType (fromIntegral largestVariantSize) AST.i8]
@@ -458,7 +458,7 @@ convertType = \case
     TConst n ->
         gets (snd . (M.! n) . enumMap) -- and assume its an enum type here as well i guess
     TVar _ -> undefined
-    TApp _ _ -> undefined
+    TApp t _ -> undefined --convertType t
     TArrow paramTypes retType -> do
         paramTypes' <- traverse convertType paramTypes
         retType' <- convertType retType

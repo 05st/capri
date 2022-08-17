@@ -8,6 +8,7 @@ import qualified Data.Text as T
 import Data.Maybe
 import Data.List
 import Data.Either.Combinators
+import Data.Generics.Uniplate.Data
 
 import Control.Monad.State
 import Control.Monad.Except
@@ -32,18 +33,26 @@ type Mono a = ExceptT MonoError (State MonoState) a
 data MonoState = MonoState
     { polys :: M.Map Name TypedTopLvl
     , requests :: [(Name, Type)]
+    , enumSubst :: M.Map Type Type
     }
+    
+applyEnumSubst :: M.Map Type Type -> Type -> Type
+applyEnumSubst subst = transform go
+    where
+        go t@TApp {} = fromMaybe t (M.lookup t subst) 
+        go other = other
 
-registerPoly :: Name -> TypedTopLvl -> Mono ()
-registerPoly name topLvl =
-    modify (\state -> state { polys = M.insert name topLvl (polys state) })
+registerPoly :: TypedTopLvl -> Mono ()
+registerPoly topLvl =
+    modify (\state -> state { polys = M.insert (topLvlToName topLvl) topLvl (polys state) })
 
 monomorphize :: TypedProgram -> Either String TypedProgram
 monomorphize prog = mapLeft show (evalState (runExceptT (monomorphizeProgram prog)) initMonoState)
     where
         initMonoState = MonoState {
             polys = M.empty,
-            requests = []
+            requests = [],
+            enumSubst = M.empty
         }
 
 monomorphizeProgram :: TypedProgram -> Mono TypedProgram
@@ -52,9 +61,11 @@ monomorphizeProgram prog = do
     mods' <- traverse monomorphizeModule prog
 
     generatedTopLvls <- genRequests 0
+    subst <- gets enumSubst
+    let newTopLvls = fmap (applyEnumSubst subst) <$> generatedTopLvls
 
     -- Put the generated top levels into a new module. SyntaxInfo doesn't matter so just copy one.
-    let polyMod = Module (modSynInfo (head mods')) (T.pack "_polys") [] [] [] generatedTopLvls
+    let polyMod = Module (modSynInfo (head mods')) (T.pack "_polys") [] [] [] newTopLvls
     return (polyMod : mods')
 
 genRequests :: Int -> Mono [TypedTopLvl]
@@ -66,18 +77,29 @@ genRequests idx = do
             let (reqName, reqType) = reqs !! idx
             def <- gets ((M.! reqName) . polys)
             
-            let (synInfo, ftyp, isPub, isOper, fname, params, retAnnot, body) = getStuffFromFunc def
+            newTopLvl <- genReq reqType def
+            (newTopLvl :) <$> genRequests (idx + 1)
+    where
+        genReq reqType (TLFunc synInfo ftyp isPub isOper fname params retAnnot body) = do
             case runSolve [Constraint synInfo reqType ftyp] of
-                Left err -> error ("[Shouldn't occur, please report] " ++ show err)
+                Left err -> undefined -- Should never occur
                 Right subst -> do
                     let newName = handlePolyName fname idx
                     newBody <- monomorphizeExpr (apply subst <$> body)
+                    return (TLFunc synInfo (apply subst ftyp) isPub isOper newName params retAnnot newBody)
+        genReq reqType (TLEnum synInfo isPub enumName tvars variants) = do
+            case runSolve [Constraint synInfo reqType (TApp (TConst enumName) (map TVar tvars))] of
+                Left err -> undefined -- Should never occur
+                Right subst -> do
+                    let (variantNames, variantTypes) = unzip variants
+                    let newVariantTypes = apply subst variantTypes
+                    let newName = handlePolyName enumName idx
+                    
+                    state <- get
+                    put (state { enumSubst = M.insert reqType (TConst newName) (enumSubst state) })
 
-                    let newFunc = TLFunc synInfo (apply subst ftyp) isPub isOper newName params retAnnot newBody
-                    (newFunc :) <$> genRequests (idx + 1)
-    where
-        getStuffFromFunc (TLFunc synInfo ftyp isPub isOper name params retAnnot body) = (synInfo, ftyp, isPub, isOper, name, params, retAnnot, body)
-        getStuffFromFunc _ = undefined
+                    return (TLEnum synInfo isPub newName [] (zip variantNames newVariantTypes))
+        genReq _ _ = undefined
 
 monomorphizeModule :: TypedModule -> Mono TypedModule
 monomorphizeModule (Module synInfo name path imports externs topLvls) = do
@@ -86,10 +108,12 @@ monomorphizeModule (Module synInfo name path imports externs topLvls) = do
 
 monomorphizeTopLvl :: Bool -> TypedTopLvl -> Mono (Maybe TypedTopLvl)
 monomorphizeTopLvl firstPass topLvl@(TLFunc synInfo typ isPub isOper name params retAnnot body)
-    | not (null (ftv typ)) = Nothing <$ when firstPass (registerPoly name topLvl)
-    | not firstPass = do
-        body' <- monomorphizeExpr body
-        (return . Just) (TLFunc synInfo typ isPub isOper name params retAnnot body')
+    | not (null (ftv typ)) = Nothing <$ when firstPass (registerPoly topLvl)
+    | not firstPass = Just . TLFunc synInfo typ isPub isOper name params retAnnot <$> monomorphizeExpr body
+    | otherwise = return Nothing
+monomorphizeTopLvl firstPass topLvl@(TLEnum _ _ _ tvars _ )
+    | not (null tvars) = Nothing <$ registerPoly topLvl
+    | not firstPass = return (Just topLvl)
     | otherwise = return Nothing
 monomorphizeTopLvl _ other = return (Just other)
 
@@ -147,8 +171,9 @@ monomorphizeExpr = \case
         ERecordRestrict synInfo typ <$> monomorphizeExpr expr <*> return label
     ERecordSelect synInfo typ expr label ->
         ERecordSelect synInfo typ <$> monomorphizeExpr expr <*> return label
-    EVariant synInfo typ enumName variant exprs ->
-        EVariant synInfo typ enumName variant <$> traverse monomorphizeExpr exprs
+    EVariant synInfo typ enumName variant exprs -> do
+        enumName' <- handlePolyReq enumName typ
+        EVariant synInfo typ enumName' variant <$> traverse monomorphizeExpr exprs
 
     where
         monomorphizeBranch (pat, expr) = (pat, ) <$> monomorphizeExpr expr
