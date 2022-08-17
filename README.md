@@ -16,7 +16,7 @@ The compiler currently targets only LLVM (previously it generated C). Everything
 
 Planned features:
 - Ad-hoc polymorphism (most likely via typeclasses)
-- Optional garbage collector ([Boehm-Demers-Weiser garbage collector](https://en.wikipedia.org/wiki/Boehm_garbage_collector))
+- Optional [garbage collector](https://en.wikipedia.org/wiki/Boehm_garbage_collector)
 - Lambdas/closures
 - Exhaustiveness checking for pattern matching
 
