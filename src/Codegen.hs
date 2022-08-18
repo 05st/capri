@@ -95,7 +95,7 @@ genModule mod = mdo
             registerOperand (Unqualified name) op
 
 genTopLvl :: TypedTopLvl -> LLVM [(Name, Operand)]
-genTopLvl (TLFunc _ t _ isOper name params _ body) = mdo
+genTopLvl (TLFunc _ t _ isOper name params _ body) = do
     let (TArrow paramTypes retType) = t
     -- registerOperand name function        read the paragraph above for explanation
     (function, strs) <- (do
@@ -139,6 +139,8 @@ genTopLvl (TLEnum _ _ enumName _ variants) = do
 
 genDecl :: TypedDecl -> Gen ()
 genDecl (DVar _ _ name _ expr) = do
+    trace (show name ++ " | " ++ show (exprType expr)) $ return ()
+
     typ <- convertType (exprType expr)
     addr <- L.alloca typ Nothing 0
 
@@ -458,7 +460,9 @@ convertType = \case
     TConst n ->
         gets (snd . (M.! n) . enumMap) -- and assume its an enum type here as well i guess
     TVar _ -> undefined
-    TApp t _ -> undefined --convertType t
+    TApp t rs -> do
+        trace (show t ++ " | " ++ show rs) $ return ()
+        undefined --convertType t
     TArrow paramTypes retType -> do
         paramTypes' <- traverse convertType paramTypes
         retType' <- convertType retType

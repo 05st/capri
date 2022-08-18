@@ -16,6 +16,8 @@ fn test(x, y) {
 };
 
 fn main() {
+    let test2: Maybe<i64> = Maybe::none;
+
     Maybe::just(123);
     Maybe::just(false);
     id(Maybe::just("abc"));

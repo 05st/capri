@@ -27,7 +27,11 @@ import Debug.Trace
 data MonoError = ManualInstantiation SyntaxInfo Name 
 instance Show MonoError where
     show (ManualInstantiation synInfo name)
-        = "Could not deduce instantiation types for '" ++ show name ++ "', manual annotation required (" ++ sourcePosPretty (syntaxInfoSourcePos synInfo) ++ ")"
+        = "ERROR: Could not deduce instantiation types for '"
+            ++ show name
+            ++ "', manual annotation required ("
+            ++ sourcePosPretty (syntaxInfoSourcePos synInfo)
+            ++ ")"
 
 type Mono a = ExceptT MonoError (State MonoState) a
 data MonoState = MonoState
@@ -66,7 +70,11 @@ monomorphizeProgram prog = do
 
     -- Put the generated top levels into a new module. SyntaxInfo doesn't matter so just copy one.
     let polyMod = Module (modSynInfo (head mods')) (T.pack "_polys") [] [] [] newTopLvls
-    return (polyMod : mods')
+    
+    -- Get rid of the TApp stuff now that we don't need it
+    let newProg = fmap (applyEnumSubst subst) <$> (polyMod : mods')
+
+    return newProg
 
 genRequests :: Int -> Mono [TypedTopLvl]
 genRequests idx = do
@@ -172,6 +180,7 @@ monomorphizeExpr = \case
     ERecordSelect synInfo typ expr label ->
         ERecordSelect synInfo typ <$> monomorphizeExpr expr <*> return label
     EVariant synInfo typ enumName variant exprs -> do
+        unless (null (ftv typ)) $ throwError (ManualInstantiation synInfo enumName)
         enumName' <- handlePolyReq enumName typ
         EVariant synInfo typ enumName' variant <$> traverse monomorphizeExpr exprs
 
