@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language: Capri
 " Maintainer: 05st
-" Latest Revision: 29 March 2022
+" Latest Revision: 21 August 2022
 
 if exists("b:current_syntax")
     finish
@@ -11,7 +11,7 @@ endif
 syn keyword Keyword module import extern infixl infixr infix prefix postfix
 
 " Keywords
-syn keyword Keyword pub fn op type let where
+syn keyword Keyword pub fn op type let enum
 syn keyword StorageClass mut
 
 " Conditionals

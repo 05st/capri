@@ -58,7 +58,7 @@ pModule modPath = do
 pTopLvlDecl :: Parser UntypedTopLvl
 pTopLvlDecl = do
     isPub <- option False (True <$ symbol "pub")
-    pFuncOperDecl isPub <|> pTypeAliasDecl isPub <|> pEnumDecl isPub
+    choice (map ($ isPub) [pFuncOperDecl, pTypeAliasDecl, pEnumDecl])
 
 pFuncOperDecl :: Bool -> Parser UntypedTopLvl
 pFuncOperDecl isPub = do

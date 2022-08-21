@@ -49,7 +49,7 @@ stlEmbedded = $(embedDir "stl")
 
 options :: Parser Options
 options = Options
-    <$> strOption (long "dir" <> short 'd' <> value "./" <> metavar "DIR" <> help "Source directory")
+    <$> argument str (value "./" <> metavar "DIR")
     <*> strOption (long "out" <> short 'o' <> value ("a" ++ exeExtension) <> metavar "FILE" <> help "Output path")
     <*> switch (long "no-stl" <> help "Don't compile with the STL")
     <*> switch (long "fast" <> help "Optimize (aggressively) for speed")

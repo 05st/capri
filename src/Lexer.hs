@@ -19,7 +19,7 @@ type Parser = ReaderT [OperatorDef] (Parsec Void Text)
 reservedNames :: [Text]
 reservedNames =
     ["module", "import",
-     "pub", "fn", "op", "type", "extern",
+     "pub", "fn", "op", "type", "extern", "enum",
      "infixl", "infixr", "infix", "prefix", "postfix",
      "let", "mut",
      "return",

@@ -139,8 +139,6 @@ genTopLvl (TLEnum _ _ enumName _ variants) = do
 
 genDecl :: TypedDecl -> Gen ()
 genDecl (DVar _ _ name _ expr) = do
-    trace (show name ++ " | " ++ show (exprType expr)) $ return ()
-
     typ <- convertType (exprType expr)
     addr <- L.alloca typ Nothing 0
 
@@ -460,9 +458,7 @@ convertType = \case
     TConst n ->
         gets (snd . (M.! n) . enumMap) -- and assume its an enum type here as well i guess
     TVar _ -> undefined
-    TApp t rs -> do
-        trace (show t ++ " | " ++ show rs) $ return ()
-        undefined --convertType t
+    TApp t rs -> undefined --convertType t
     TArrow paramTypes retType -> do
         paramTypes' <- traverse convertType paramTypes
         retType' <- convertType retType

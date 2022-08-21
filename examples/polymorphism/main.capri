@@ -3,6 +3,7 @@ module main;
 import prelude;
 
 enum Maybe<a> = <just(a), none>;
+enum Either<a, b> = <left(a), right(b)>;
 
 fn id(x)
     x;
@@ -16,7 +17,9 @@ fn test(x, y) {
 };
 
 fn main() {
+    let test1: Either<str, bool> = Either::left("test");
     let test2: Maybe<i64> = Maybe::none;
+    let test3 = Maybe::just(true);
 
     Maybe::just(123);
     Maybe::just(false);

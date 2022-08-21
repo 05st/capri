@@ -3,3 +3,6 @@ module prelude;
 // The STL is embedded into the compiler
 
 pub import io;
+
+enum Maybe<a> = <some(a), none>;
+enum Either<a, b> = <left(a), right(b)>;
